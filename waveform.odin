@@ -219,6 +219,18 @@ update_waveform_input :: proc(state: ^App_State) {
 
 			if state.selection_end - state.selection_start < 0.05 {
 				state.has_selection = false
+			} else {
+				// Seek to selection start and begin playback
+				rl.SeekMusicStream(state.music, state.selection_start)
+				state.current_time = state.selection_start
+				if !state.is_playing {
+					rl.PlayMusicStream(state.music)
+					rl.SeekMusicStream(state.music, state.selection_start)
+					rl.SetMusicPitch(state.music, state.playback_speed)
+					rl.SetMusicVolume(state.music, state.volume)
+					state.is_playing = true
+				}
+				state.loop_enabled = true
 			}
 		}
 	}

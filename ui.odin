@@ -214,38 +214,86 @@ draw_controls :: proc(state: ^App_State, w: f32, h: f32) {
 	rl.DrawLineV({0, area_y}, {w, area_y}, rl.Color{50, 50, 60, 255})
 
 	btn_h: f32 = 40
-	btn_y := area_y + (CONTROLS_HEIGHT - btn_h) / 2
+	btn_sz: f32 = 44
+	btn_y := area_y + (CONTROLS_HEIGHT - btn_sz) / 2
+	icon_pad: f32 = 12
 
 	// -- Play/Pause --
-	play_w: f32 = 80
-	play_label: cstring = state.is_playing ? "Pause" : "Play"
-	if rl.GuiButton({pad, btn_y, play_w, btn_h}, play_label) {
+	play_rect := rl.Rectangle{pad, btn_y, btn_sz, btn_sz}
+	play_hover := rl.CheckCollisionPointRec(rl.GetMousePosition(), play_rect)
+	play_bg: rl.Color = play_hover ? {60, 60, 75, 255} : {40, 40, 52, 255}
+	rl.DrawRectangleRounded(play_rect, 0.2, 4, play_bg)
+	rl.DrawRectangleRoundedLinesEx(play_rect, 0.2, 4, 1, rl.Color{80, 80, 100, 255})
+
+	if state.is_playing {
+		// Pause icon: two vertical bars (yellow)
+		bar_w: f32 = 5
+		bar_h: f32 = 20
+		bar_gap: f32 = 6
+		bx := play_rect.x + (btn_sz - bar_w * 2 - bar_gap) / 2
+		by := play_rect.y + (btn_sz - bar_h) / 2
+		rl.DrawRectangleRec({bx, by, bar_w, bar_h}, rl.Color{240, 200, 40, 255})
+		rl.DrawRectangleRec({bx + bar_w + bar_gap, by, bar_w, bar_h}, rl.Color{240, 200, 40, 255})
+	} else {
+		// Play icon: triangle (green)
+		cx := play_rect.x + btn_sz / 2
+		cy := play_rect.y + btn_sz / 2
+		rl.DrawTriangle(
+			{cx - 7, cy - 10},
+			{cx - 7, cy + 10},
+			{cx + 10, cy},
+			rl.Color{60, 200, 80, 255},
+		)
+	}
+	if play_hover && rl.IsMouseButtonPressed(.LEFT) {
 		toggle_playback(state)
 	}
-	cursor := pad + play_w + 10
+	cursor := pad + btn_sz + 8
 
 	// -- Stop --
-	stop_w: f32 = 65
-	if rl.GuiButton({cursor, btn_y, stop_w, btn_h}, "Stop") {
+	stop_rect := rl.Rectangle{cursor, btn_y, btn_sz, btn_sz}
+	stop_hover := rl.CheckCollisionPointRec(rl.GetMousePosition(), stop_rect)
+	stop_bg: rl.Color = stop_hover ? {60, 60, 75, 255} : {40, 40, 52, 255}
+	rl.DrawRectangleRounded(stop_rect, 0.2, 4, stop_bg)
+	rl.DrawRectangleRoundedLinesEx(stop_rect, 0.2, 4, 1, rl.Color{80, 80, 100, 255})
+	// Stop icon: square (red)
+	sq_sz: f32 = 16
+	rl.DrawRectangleRec(
+		{stop_rect.x + (btn_sz - sq_sz) / 2, stop_rect.y + (btn_sz - sq_sz) / 2, sq_sz, sq_sz},
+		rl.Color{220, 60, 60, 255},
+	)
+	if stop_hover && rl.IsMouseButtonPressed(.LEFT) {
 		stop_playback(state)
 	}
-	cursor += stop_w + 10
+	cursor += btn_sz + 8
 
 	// -- Record --
-	rec_w: f32 = 80
-	rec_label: cstring = state.is_recording ? "Stop Rec" : "Record"
+	rec_rect := rl.Rectangle{cursor, btn_y, btn_sz, btn_sz}
+	rec_hover := rl.CheckCollisionPointRec(rl.GetMousePosition(), rec_rect)
+	rec_bg: rl.Color
 	if state.is_recording {
-		// Red tint while recording
-		rl.DrawRectangleRec({cursor - 2, btn_y - 2, rec_w + 4, btn_h + 4}, rl.Color{200, 40, 40, 60})
+		rec_bg = {80, 40, 50, 255}
+	} else if rec_hover {
+		rec_bg = {60, 60, 75, 255}
+	} else {
+		rec_bg = {40, 40, 52, 255}
 	}
-	if rl.GuiButton({cursor, btn_y, rec_w, btn_h}, rec_label) {
+	rl.DrawRectangleRounded(rec_rect, 0.2, 4, rec_bg)
+	rl.DrawRectangleRoundedLinesEx(rec_rect, 0.2, 4, 1, rl.Color{80, 80, 100, 255})
+	// Record icon: circle (pink)
+	rec_color: rl.Color = state.is_recording ? {255, 160, 180, 255} : {230, 140, 160, 255}
+	rl.DrawCircle(
+		i32(rec_rect.x + btn_sz / 2), i32(rec_rect.y + btn_sz / 2),
+		9, rec_color,
+	)
+	if rec_hover && rl.IsMouseButtonPressed(.LEFT) {
 		if state.is_recording {
 			stop_recording(state)
 		} else {
 			start_recording(state)
 		}
 	}
-	cursor += rec_w + gap
+	cursor += btn_sz + gap
 
 	draw_sep(cursor, area_y)
 	cursor += gap
