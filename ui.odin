@@ -306,34 +306,56 @@ draw_controls :: proc(state: ^App_State, w: f32, h: f32) {
 	draw_sep(cursor, area_y)
 	cursor += gap
 
-	// -- Speed --
+	// -- Speed / Volume (stacked) --
 	remaining := w - cursor - pad
-	speed_w := remaining * 0.5 - gap
-	speed_w = math.clamp(speed_w, 120, 320)
+	bay_w := (remaining - gap) / 2
+	bay_w = math.clamp(bay_w, 150, 350)
+	slider_h: f32 = 12
+	row1_y := area_y + 10
+	row2_y := area_y + 48
 
 	speed_label := rl.TextFormat("Speed: %.2fx", state.playback_speed)
-	draw_text(state, speed_label, cursor, btn_y + 2, 16, rl.Color{200, 200, 220, 255})
-	rl.GuiSlider({cursor, btn_y + 24, speed_w, 14}, "", "", &state.playback_speed, 0.25, 2.0)
-	cursor += speed_w + gap
+	draw_text(state, speed_label, cursor, row1_y, 14, rl.Color{200, 200, 220, 255})
+	rl.GuiSlider({cursor, row1_y + 18, bay_w, slider_h}, "", "", &state.playback_speed, 0.25, 2.0)
 
 	if state.is_playing {
 		rl.SetMusicPitch(state.music, state.playback_speed)
 	}
 
-	draw_sep(cursor, area_y)
-	cursor += gap
-
-	// -- Volume --
-	vol_w := w - cursor - pad
-	vol_w = math.clamp(vol_w, 80, 280)
-
 	vol_pct := rl.TextFormat("Vol: %d%%", i32(state.volume * 100))
-	draw_text(state, vol_pct, cursor, btn_y + 2, 16, rl.Color{200, 200, 220, 255})
-	rl.GuiSlider({cursor, btn_y + 24, vol_w, 14}, "", "", &state.volume, 0.0, 1.0)
+	draw_text(state, vol_pct, cursor, row2_y, 14, rl.Color{200, 200, 220, 255})
+	rl.GuiSlider({cursor, row2_y + 18, bay_w, slider_h}, "", "", &state.volume, 0.0, 1.0)
 
 	if state.audio_loaded {
 		rl.SetMusicVolume(state.music, state.volume)
 	}
+
+	cursor += bay_w + gap
+
+	draw_sep(cursor, area_y)
+	cursor += gap
+
+	// -- Detection filters (stacked) --
+	det_w := w - cursor - pad
+	det_w = math.clamp(det_w, 150, 350)
+
+	sens_label := rl.TextFormat("Sensitivity: %.1f", state.confidence_threshold)
+	draw_text(state, sens_label, cursor, row1_y, 14, rl.Color{180, 180, 200, 255})
+	rl.GuiSlider({cursor, row1_y + 18, det_w, slider_h}, "", "", &state.confidence_threshold, 1.0, 10.0)
+
+	// Freq range on second row, split in half
+	freq_half := (det_w - 16) / 2
+
+	min_note, _, min_oct, _ := frequency_to_note(f64(state.min_freq_filter))
+	min_label := rl.TextFormat("Min: %dHz (%s%d)", i32(state.min_freq_filter), strings.clone_to_cstring(min_note, context.temp_allocator), i32(min_oct))
+	draw_text(state, min_label, cursor, row2_y, 12, rl.Color{170, 170, 190, 255})
+	rl.GuiSlider({cursor, row2_y + 16, freq_half, slider_h}, "", "", &state.min_freq_filter, 20.0, 2000.0)
+
+	max_x := cursor + freq_half + 16
+	max_note, _, max_oct, _ := frequency_to_note(f64(state.max_freq_filter))
+	max_label := rl.TextFormat("Max: %dHz (%s%d)", i32(state.max_freq_filter), strings.clone_to_cstring(max_note, context.temp_allocator), i32(max_oct))
+	draw_text(state, max_label, max_x, row2_y, 12, rl.Color{170, 170, 190, 255})
+	rl.GuiSlider({max_x, row2_y + 16, freq_half, slider_h}, "", "", &state.max_freq_filter, 200.0, 8000.0)
 }
 
 draw_status_bar :: proc(state: ^App_State, w: f32, h: f32) {
@@ -373,6 +395,8 @@ draw_note_display :: proc(state: ^App_State) {
 	marker_top := rect.y + 8
 
 	for &note in notes {
+		if note.confidence < state.confidence_threshold do continue
+		if note.frequency < state.min_freq_filter || note.frequency > state.max_freq_filter do continue
 		if note.time < state.view_start || note.time > view_end do continue
 
 		x := time_to_screen_x(state, note.time)
@@ -391,7 +415,7 @@ draw_note_display :: proc(state: ^App_State) {
 	}
 
 	// -- Current note panel --
-	note_idx := find_note_at_time(notes, state.current_time)
+	note_idx := find_note_at_time(notes, state.current_time, state.confidence_threshold, state.min_freq_filter, state.max_freq_filter)
 	if note_idx >= 0 {
 		note := notes[note_idx]
 		if abs(note.time - state.current_time) < f32(HOP_SIZE) / f32(state.sample_rate) * 2 {

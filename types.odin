@@ -96,6 +96,11 @@ App_State :: struct {
 	library_files:   [dynamic]string,
 	library_scroll:  f32,
 
+	// Detection filters
+	confidence_threshold: f32,
+	min_freq_filter:      f32,
+	max_freq_filter:      f32,
+
 	// Recording
 	is_recording:    bool,
 	record_file:     string,
@@ -110,11 +115,14 @@ App_State :: struct {
 
 init_state :: proc() -> App_State {
 	return App_State{
-		playback_speed  = 1.0,
-		volume          = 1.0,
-		view_start      = 0,
-		view_duration   = 1.0,
-		cache_dirty     = true,
-		download_status = "Ready",
+		playback_speed       = 1.0,
+		volume               = 1.0,
+		view_start           = 0,
+		view_duration        = 1.0,
+		cache_dirty          = true,
+		download_status      = "Ready",
+		confidence_threshold = 3.0,
+		min_freq_filter      = 60.0,
+		max_freq_filter      = 4000.0,
 	}
 }

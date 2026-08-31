@@ -53,7 +53,8 @@ analyze_full_track :: proc(state: ^App_State) {
 		avg_mag := sum_mag / f64(max_bin - min_bin + 1)
 		confidence := f32(peak_mag / max(avg_mag, 1e-10))
 
-		if confidence < CONFIDENCE_THRESHOLD do continue
+		// Store all notes above a low floor; real filtering at display time
+		if confidence < 1.5 do continue
 		if peak_bin <= min_bin || peak_bin >= max_bin do continue
 
 		// Parabolic interpolation for sub-bin accuracy
@@ -109,10 +110,11 @@ frequency_to_note :: proc(freq: f64) -> (name: string, midi: int, octave: int, n
 	return
 }
 
-// Binary search for nearest note at given time
-find_note_at_time :: proc(notes: []Detected_Note, time: f32) -> int {
+// Find nearest note at given time that passes filters
+find_note_at_time :: proc(notes: []Detected_Note, time: f32, conf_thresh: f32 = 0, min_freq: f32 = 0, max_freq: f32 = 99999) -> int {
 	if len(notes) == 0 do return -1
 
+	// Binary search to find approximate position
 	lo, hi := 0, len(notes) - 1
 	for lo <= hi {
 		mid := (lo + hi) / 2
@@ -121,15 +123,27 @@ find_note_at_time :: proc(notes: []Detected_Note, time: f32) -> int {
 		} else if notes[mid].time > time {
 			hi = mid - 1
 		} else {
-			return mid
+			lo = mid
+			break
 		}
 	}
 
-	if lo >= len(notes) do return len(notes) - 1
-	if hi < 0 do return 0
+	// Scan nearby notes for closest match that passes filters
+	best := -1
+	best_dist: f32 = 999999
+	search_start := max(0, lo - 20)
+	search_end := min(len(notes), lo + 20)
 
-	if abs(notes[lo].time - time) < abs(notes[hi].time - time) {
-		return lo
+	for i in search_start ..< search_end {
+		n := notes[i]
+		if n.confidence < conf_thresh do continue
+		if n.frequency < min_freq || n.frequency > max_freq do continue
+		dist := abs(n.time - time)
+		if dist < best_dist {
+			best_dist = dist
+			best = i
+		}
 	}
-	return hi
+
+	return best
 }
