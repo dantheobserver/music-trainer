@@ -117,10 +117,6 @@ draw_ui :: proc(state: ^App_State) {
 		draw_text(state, hint2, rect.x + rect.width / 2 - hw2 / 2, rect.y + rect.height / 2 + 15, 18, rl.Color{100, 100, 120, 255})
 	}
 
-	if state.library_open {
-		draw_library_panel(state, w, h)
-	}
-
 	handle_keyboard(state)
 }
 
@@ -363,6 +359,13 @@ draw_note_display :: proc(state: ^App_State) {
 			draw_text(state, freq_label, sep_x + (current_panel_w - fw) / 2, cy + 50, 16, rl.Color{color.r, color.g, color.b, 180})
 		}
 	}
+}
+
+draw_library_overlay :: proc(state: ^App_State) {
+	if !state.library_open do return
+	w := f32(rl.GetScreenWidth())
+	h := f32(rl.GetScreenHeight())
+	draw_library_panel(state, w, h)
 }
 
 draw_library_panel :: proc(state: ^App_State, w: f32, h: f32) {

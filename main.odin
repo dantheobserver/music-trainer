@@ -43,6 +43,7 @@ main :: proc() {
 
 		draw_ui(&state)
 		draw_waveform(&state)
+		draw_library_overlay(&state)
 
 		rl.EndDrawing()
 
