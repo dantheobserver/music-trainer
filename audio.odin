@@ -95,10 +95,13 @@ toggle_playback :: proc(state: ^App_State) {
 		rl.PauseMusicStream(state.music)
 		state.is_playing = false
 	} else {
-		if state.current_time <= 0 || state.current_time >= state.duration {
+		if !rl.IsMusicStreamPlaying(state.music) {
+			// Stream is stopped — must PlayMusicStream then seek
 			rl.PlayMusicStream(state.music)
 			if state.loop_enabled && state.has_selection {
 				rl.SeekMusicStream(state.music, state.selection_start)
+			} else if state.current_time > 0 && state.current_time < state.duration {
+				rl.SeekMusicStream(state.music, state.current_time)
 			}
 		} else {
 			rl.ResumeMusicStream(state.music)

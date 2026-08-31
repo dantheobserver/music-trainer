@@ -514,6 +514,7 @@ draw_library_panel :: proc(state: ^App_State, w: f32, h: f32) {
 			cpath := strings.clone_to_cstring(file, context.temp_allocator)
 			load_audio_file(state, cpath)
 			state.library_open = false
+			state.skip_waveform_click = true
 			rl.EndScissorMode()
 			return
 		}

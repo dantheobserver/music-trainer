@@ -74,6 +74,8 @@ App_State :: struct {
 	has_selection:   bool,
 	is_selecting:    bool,
 	drag_handle:     Drag_Handle,
+	click_start_x:       f32,
+	skip_waveform_click: bool,
 
 	// Waveform display
 	waveform_cache:  [dynamic]Waveform_Column,

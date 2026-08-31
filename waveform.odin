@@ -83,19 +83,50 @@ draw_waveform :: proc(state: ^App_State) {
 		rl.DrawRectangleRec({sel_x2 - handle_w / 2, rect.y, handle_w, rect.height}, rl.Color{100, 149, 237, 180})
 	}
 
-	// Waveform columns
+	// Waveform columns — colored by detected note
 	half_h := rect.height * 0.5
+	notes := state.detected_notes[:]
+	note_cursor := 0
+	hop_time := f32(HOP_SIZE) / f32(state.sample_rate)
+	dim_color := rl.Color{50, 60, 55, 255}
+
 	for col in 0 ..< len(state.waveform_cache) {
 		wc := state.waveform_cache[col]
 		x := rect.x + f32(col)
 		y_min := center_y - wc.max_val * half_h
 		y_max := center_y - wc.min_val * half_h
 
-		color := rl.Color{80, 200, 120, 255}
+		col_time := screen_x_to_time(state, x)
+
+		// Advance note cursor to stay near column time
+		for note_cursor < len(notes) - 1 && notes[note_cursor].time < col_time - hop_time {
+			note_cursor += 1
+		}
+
+		// Find nearest passing note within hop_time window
+		color := dim_color
+		best_dist: f32 = hop_time * 2
+		for i in max(0, note_cursor - 2) ..< min(len(notes), note_cursor + 4) {
+			n := notes[i]
+			if n.confidence < state.confidence_threshold do continue
+			if n.frequency < state.min_freq_filter || n.frequency > state.max_freq_filter do continue
+			dist := abs(n.time - col_time)
+			if dist < best_dist {
+				best_dist = dist
+				nc := note_colors[n.note_index]
+				color = rl.Color{nc.r, nc.g, nc.b, 200}
+			}
+		}
+
 		if state.has_selection {
-			col_time := screen_x_to_time(state, x)
 			if col_time >= state.selection_start && col_time <= state.selection_end {
-				color = rl.Color{100, 220, 255, 255}
+				// Brighten selected region
+				color = rl.Color{
+					u8(min(i32(color.r) + 40, 255)),
+					u8(min(i32(color.g) + 40, 255)),
+					u8(min(i32(color.b) + 40, 255)),
+					255,
+				}
 			}
 		}
 
@@ -130,6 +161,7 @@ draw_waveform :: proc(state: ^App_State) {
 
 update_waveform_input :: proc(state: ^App_State) {
 	if !state.audio_loaded do return
+	if state.library_open do return
 
 	mouse := rl.GetMousePosition()
 	rect := state.waveform_rect
@@ -157,12 +189,14 @@ update_waveform_input :: proc(state: ^App_State) {
 		}
 	}
 
-	// Selection dragging
+	// Left-click: seek on click, select on drag (min 8px movement)
+	DRAG_THRESHOLD :: 8
+
 	if in_rect && rl.IsMouseButtonPressed(.LEFT) {
+		state.click_start_x = mouse.x
 		click_time := screen_x_to_time(state, mouse.x)
 
 		if state.has_selection {
-			// Check handles
 			handle_threshold: f32 = 8
 			start_x := time_to_screen_x(state, state.selection_start)
 			end_x := time_to_screen_x(state, state.selection_end)
@@ -173,21 +207,25 @@ update_waveform_input :: proc(state: ^App_State) {
 			} else if abs(mouse.x - end_x) < handle_threshold {
 				state.drag_handle = .Right
 				state.is_selecting = true
-			} else if mouse.x > start_x && mouse.x < end_x {
-				state.drag_handle = .Body
-				state.is_selecting = true
 			} else {
-				// New selection
+				// Will become selection or seek on release
 				state.selection_start = click_time
 				state.selection_end = click_time
 				state.drag_handle = .Right
-				state.is_selecting = true
-				state.has_selection = true
+				state.is_selecting = false
+				state.has_selection = false
 			}
 		} else {
 			state.selection_start = click_time
 			state.selection_end = click_time
 			state.drag_handle = .Right
+			state.is_selecting = false
+		}
+	}
+
+	if in_rect && rl.IsMouseButtonDown(.LEFT) && !state.is_selecting {
+		// Start selecting only after exceeding drag threshold
+		if abs(mouse.x - state.click_start_x) >= DRAG_THRESHOLD {
 			state.is_selecting = true
 			state.has_selection = true
 		}
@@ -203,12 +241,11 @@ update_waveform_input :: proc(state: ^App_State) {
 		case .Right:
 			state.selection_end = max(drag_time, state.selection_start + 0.01)
 		case .Body:
-			// Not implemented for v1
 		case .None:
 		}
 	}
 
-	if rl.IsMouseButtonReleased(.LEFT) {
+	if rl.IsMouseButtonReleased(.LEFT) && !state.skip_waveform_click {
 		if state.is_selecting {
 			state.is_selecting = false
 			state.drag_handle = .None
@@ -232,7 +269,17 @@ update_waveform_input :: proc(state: ^App_State) {
 				}
 				state.loop_enabled = true
 			}
+		} else if in_rect {
+			// Click without drag — seek to position
+			seek_time := screen_x_to_time(state, mouse.x)
+			seek_time = math.clamp(seek_time, 0, state.duration)
+			rl.SeekMusicStream(state.music, seek_time)
+			state.current_time = seek_time
 		}
+		state.drag_handle = .None
+	}
+	if rl.IsMouseButtonReleased(.LEFT) {
+		state.skip_waveform_click = false
 	}
 
 	// Click to seek (right-click)
