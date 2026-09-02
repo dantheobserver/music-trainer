@@ -137,9 +137,10 @@ draw_title_bar :: proc(state: ^App_State, w: f32) {
 	}
 
 	if state.audio_loaded {
-		name := rl.TextFormat("%s", strings.clone_to_cstring(state.file_name, context.temp_allocator))
-		nw := measure_text(state, name, 18)
-		draw_text(state, name, lib_btn_x - nw - 14, 16, 18, rl.Color{160, 160, 180, 255})
+		_, base_name := filepath.split(state.file_name)
+		display_name := strings.clone_to_cstring(base_name, context.temp_allocator)
+		nw := measure_text(state, display_name, 18)
+		draw_text(state, display_name, lib_btn_x - nw - 14, 16, 18, rl.Color{160, 160, 180, 255})
 	}
 
 	if state.audio_loaded {

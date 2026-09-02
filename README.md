@@ -72,7 +72,9 @@ Or run directly with an optional file argument:
 | Rename file | Pencil icon next to file |
 | Delete file | Trash icon next to file |
 
-Audio files are stored in `~/Music/music_trainer/`.
+## Music Library
+
+Audio files are stored in `~/Music/music_trainer/`. This directory is created automatically on first use. Downloaded files, recordings, and any files you want in the library should be placed here. The Library panel browses this folder and supports `.wav`, `.mp3`, `.flac`, and `.ogg` formats.
 
 ## Keyboard Shortcuts
 
