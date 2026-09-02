@@ -1,4 +1,6 @@
+build/
 music-trainer
+music_trainer
 *.wav
 *.mp3
 *.flac
