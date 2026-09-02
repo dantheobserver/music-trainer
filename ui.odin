@@ -440,8 +440,297 @@ draw_library_overlay :: proc(state: ^App_State) {
 	draw_library_panel(state, w, h)
 }
 
+start_rename :: proc(state: ^App_State, index: int, stem: string, ext: string) {
+	state.rename_active = true
+	state.rename_index = index
+	state.rename_buffer = {}
+	state.rename_ext = {}
+	for ci in 0 ..< min(len(stem), 255) {
+		state.rename_buffer[ci] = stem[ci]
+	}
+	for ci in 0 ..< min(len(ext), 15) {
+		state.rename_ext[ci] = ext[ci]
+	}
+	// Select all on entry
+	state.rename_cursor = len(stem)
+	state.rename_sel_start = 0
+	state.rename_sel_end = len(stem)
+	state.rename_blink = 0
+}
+
+rename_text_len :: proc(buf: []u8) -> int {
+	for i in 0 ..< len(buf) {
+		if buf[i] == 0 do return i
+	}
+	return len(buf)
+}
+
+rename_insert_char :: proc(state: ^App_State, ch: u8) {
+	buf := state.rename_buffer[:]
+	text_len := rename_text_len(buf)
+
+	// Delete selection first if any
+	if state.rename_sel_start != state.rename_sel_end {
+		sel_lo := min(state.rename_sel_start, state.rename_sel_end)
+		sel_hi := max(state.rename_sel_start, state.rename_sel_end)
+		// Shift left
+		for i in sel_lo ..< text_len - (sel_hi - sel_lo) {
+			buf[i] = buf[i + (sel_hi - sel_lo)]
+		}
+		text_len -= (sel_hi - sel_lo)
+		buf[text_len] = 0
+		state.rename_cursor = sel_lo
+		state.rename_sel_start = sel_lo
+		state.rename_sel_end = sel_lo
+	}
+
+	if text_len >= 254 do return
+	// Shift right
+	for i := text_len; i > state.rename_cursor; i -= 1 {
+		buf[i] = buf[i - 1]
+	}
+	buf[state.rename_cursor] = ch
+	state.rename_cursor += 1
+	buf[text_len + 1] = 0
+	state.rename_sel_start = state.rename_cursor
+	state.rename_sel_end = state.rename_cursor
+}
+
+// Custom text input with selection, cursor positioning, double-click select-all
+draw_rename_input :: proc(state: ^App_State, rect: rl.Rectangle) -> (committed: bool, cancelled: bool) {
+	mouse := rl.GetMousePosition()
+	buf := state.rename_buffer[:]
+	text_len := rename_text_len(buf)
+	char_w: f32 = 8.5
+	text_x := rect.x + 4
+	text_y := rect.y + (rect.height - 16) / 2
+
+	// Background
+	rl.DrawRectangleRec(rect, rl.Color{20, 20, 28, 255})
+	rl.DrawRectangleLinesEx(rect, 1, rl.Color{100, 120, 180, 255})
+
+	// Measure substring widths for accurate cursor positioning
+	char_x_pos := make([]f32, text_len + 1, context.temp_allocator)
+	char_x_pos[0] = text_x
+	for ci in 1 ..= text_len {
+		substr := strings.clone_to_cstring(string(buf[:ci]), context.temp_allocator)
+		char_x_pos[ci] = text_x + measure_text(state, substr, 16)
+	}
+
+	// Click to position cursor / double-click to select all
+	in_rect := rl.CheckCollisionPointRec(mouse, rect)
+	if in_rect && rl.IsMouseButtonPressed(.LEFT) {
+		now := rl.GetTime()
+		if (now - state.rename_last_click) < 0.35 {
+			// Double-click: select all
+			state.rename_sel_start = 0
+			state.rename_sel_end = text_len
+			state.rename_cursor = text_len
+			state.rename_last_click = 0
+		} else {
+			// Single click: position cursor
+			best_ci := 0
+			best_dist: f32 = 9999
+			for ci in 0 ..= text_len {
+				dist := abs(mouse.x - char_x_pos[ci])
+				if dist < best_dist {
+					best_dist = dist
+					best_ci = ci
+				}
+			}
+			state.rename_cursor = best_ci
+			state.rename_sel_start = best_ci
+			state.rename_sel_end = best_ci
+			state.rename_last_click = now
+		}
+		state.rename_blink = 0
+	}
+
+	// Drag to select
+	if in_rect && rl.IsMouseButtonDown(.LEFT) && !rl.IsMouseButtonPressed(.LEFT) {
+		best_ci := 0
+		best_dist: f32 = 9999
+		for ci in 0 ..= text_len {
+			dist := abs(mouse.x - char_x_pos[ci])
+			if dist < best_dist {
+				best_dist = dist
+				best_ci = ci
+			}
+		}
+		state.rename_sel_end = best_ci
+		state.rename_cursor = best_ci
+	}
+
+	// Keyboard input
+	ctrl := rl.IsKeyDown(.LEFT_CONTROL) || rl.IsKeyDown(.RIGHT_CONTROL)
+
+	if ctrl && rl.IsKeyPressed(.A) {
+		state.rename_sel_start = 0
+		state.rename_sel_end = text_len
+		state.rename_cursor = text_len
+	}
+
+	// Typed characters
+	for {
+		ch := rl.GetCharPressed()
+		if ch == 0 do break
+		if ch >= 32 && ch < 127 {
+			rename_insert_char(state, u8(ch))
+			state.rename_blink = 0
+		}
+	}
+
+	// Backspace
+	if rl.IsKeyPressed(.BACKSPACE) || rl.IsKeyPressedRepeat(.BACKSPACE) {
+		if state.rename_sel_start != state.rename_sel_end {
+			sel_lo := min(state.rename_sel_start, state.rename_sel_end)
+			sel_hi := max(state.rename_sel_start, state.rename_sel_end)
+			for i in sel_lo ..< text_len - (sel_hi - sel_lo) {
+				buf[i] = buf[i + (sel_hi - sel_lo)]
+			}
+			new_len := text_len - (sel_hi - sel_lo)
+			buf[new_len] = 0
+			state.rename_cursor = sel_lo
+			state.rename_sel_start = sel_lo
+			state.rename_sel_end = sel_lo
+		} else if state.rename_cursor > 0 {
+			for i in state.rename_cursor - 1 ..< text_len - 1 {
+				buf[i] = buf[i + 1]
+			}
+			buf[text_len - 1] = 0
+			state.rename_cursor -= 1
+			state.rename_sel_start = state.rename_cursor
+			state.rename_sel_end = state.rename_cursor
+		}
+		state.rename_blink = 0
+	}
+
+	// Delete key
+	if rl.IsKeyPressed(.DELETE) || rl.IsKeyPressedRepeat(.DELETE) {
+		if state.rename_sel_start != state.rename_sel_end {
+			sel_lo := min(state.rename_sel_start, state.rename_sel_end)
+			sel_hi := max(state.rename_sel_start, state.rename_sel_end)
+			for i in sel_lo ..< text_len - (sel_hi - sel_lo) {
+				buf[i] = buf[i + (sel_hi - sel_lo)]
+			}
+			new_len := text_len - (sel_hi - sel_lo)
+			buf[new_len] = 0
+			state.rename_cursor = sel_lo
+			state.rename_sel_start = sel_lo
+			state.rename_sel_end = sel_lo
+		} else if state.rename_cursor < text_len {
+			for i in state.rename_cursor ..< text_len - 1 {
+				buf[i] = buf[i + 1]
+			}
+			buf[text_len - 1] = 0
+		}
+	}
+
+	// Arrow keys
+	shift := rl.IsKeyDown(.LEFT_SHIFT) || rl.IsKeyDown(.RIGHT_SHIFT)
+	if rl.IsKeyPressed(.LEFT) || rl.IsKeyPressedRepeat(.LEFT) {
+		if state.rename_cursor > 0 {
+			state.rename_cursor -= 1
+		}
+		if shift {
+			state.rename_sel_end = state.rename_cursor
+		} else {
+			state.rename_sel_start = state.rename_cursor
+			state.rename_sel_end = state.rename_cursor
+		}
+		state.rename_blink = 0
+	}
+	if rl.IsKeyPressed(.RIGHT) || rl.IsKeyPressedRepeat(.RIGHT) {
+		// Recalc text_len since it may have changed
+		cur_len := rename_text_len(buf)
+		if state.rename_cursor < cur_len {
+			state.rename_cursor += 1
+		}
+		if shift {
+			state.rename_sel_end = state.rename_cursor
+		} else {
+			state.rename_sel_start = state.rename_cursor
+			state.rename_sel_end = state.rename_cursor
+		}
+		state.rename_blink = 0
+	}
+	if ctrl && rl.IsKeyPressed(.V) {
+		clip := rl.GetClipboardText()
+		if clip != nil {
+			for ch in string(clip) {
+				if ch >= 32 && ch < 127 {
+					rename_insert_char(state, u8(ch))
+				}
+			}
+		}
+	}
+
+	// Home/End
+	if rl.IsKeyPressed(.HOME) {
+		state.rename_cursor = 0
+		if !shift {
+			state.rename_sel_start = 0
+			state.rename_sel_end = 0
+		} else {
+			state.rename_sel_end = 0
+		}
+	}
+	if rl.IsKeyPressed(.END) {
+		cur_len := rename_text_len(buf)
+		state.rename_cursor = cur_len
+		if !shift {
+			state.rename_sel_start = cur_len
+			state.rename_sel_end = cur_len
+		} else {
+			state.rename_sel_end = cur_len
+		}
+	}
+
+	// Enter commits, Escape cancels
+	if rl.IsKeyPressed(.ENTER) || rl.IsKeyPressed(.KP_ENTER) {
+		return true, false
+	}
+	if rl.IsKeyPressed(.ESCAPE) {
+		return false, true
+	}
+
+	// Draw selection highlight
+	sel_lo := min(state.rename_sel_start, state.rename_sel_end)
+	sel_hi := max(state.rename_sel_start, state.rename_sel_end)
+	cur_len := rename_text_len(buf)
+
+	// Recompute char positions after edits
+	draw_positions := make([]f32, cur_len + 1, context.temp_allocator)
+	draw_positions[0] = text_x
+	for ci in 1 ..= cur_len {
+		substr := strings.clone_to_cstring(string(buf[:ci]), context.temp_allocator)
+		draw_positions[ci] = text_x + measure_text(state, substr, 16)
+	}
+
+	if sel_lo != sel_hi && sel_lo < cur_len {
+		sel_hi_clamped := min(sel_hi, cur_len)
+		sx := draw_positions[sel_lo]
+		sw := draw_positions[sel_hi_clamped] - sx
+		rl.DrawRectangleRec({sx, text_y - 1, sw, 18}, rl.Color{80, 120, 200, 120})
+	}
+
+	// Draw text
+	display := strings.clone_to_cstring(string(cstring(raw_data(buf))), context.temp_allocator)
+	draw_text(state, display, text_x, text_y, 16, rl.Color{240, 240, 250, 255})
+
+	// Blinking cursor
+	state.rename_blink += rl.GetFrameTime()
+	if int(state.rename_blink * 2) % 2 == 0 {
+		cursor_ci := math.clamp(state.rename_cursor, 0, cur_len)
+		cx := draw_positions[cursor_ci]
+		rl.DrawLineV({cx, text_y - 1}, {cx, text_y + 17}, rl.Color{200, 200, 255, 255})
+	}
+
+	return false, false
+}
+
 draw_library_panel :: proc(state: ^App_State, w: f32, h: f32) {
-	panel_w: f32 = 340
+	panel_w: f32 = 380
 	panel_x := w - panel_w
 	panel_y: f32 = TITLE_HEIGHT
 	panel_h := h - TITLE_HEIGHT
@@ -463,12 +752,18 @@ draw_library_panel :: proc(state: ^App_State, w: f32, h: f32) {
 	close_y := panel_y + 6
 	if rl.GuiButton({close_x, close_y, close_sz, close_sz}, "X") {
 		state.library_open = false
+		state.rename_active = false
+		state.delete_confirm = false
+		stop_preview(state)
 		return
 	}
 
 	// File list
 	list_y := panel_y + header_h + 4
 	item_h: f32 = 36
+	icon_sz: f32 = 24
+	icon_gap: f32 = 4
+	icons_w := icon_sz * 3 + icon_gap * 2 + 8
 	mouse := rl.GetMousePosition()
 
 	if len(state.library_files) == 0 {
@@ -489,6 +784,35 @@ draw_library_panel :: proc(state: ^App_State, w: f32, h: f32) {
 		}
 	}
 
+	// Delete confirmation dialog
+	if state.delete_confirm && state.delete_index >= 0 && state.delete_index < len(state.library_files) {
+		dialog_w: f32 = 300
+		dialog_h: f32 = 100
+		dialog_x := panel_x + (panel_w - dialog_w) / 2
+		dialog_y := panel_y + panel_h / 2 - dialog_h / 2
+
+		rl.DrawRectangleRec({dialog_x, dialog_y, dialog_w, dialog_h}, rl.Color{40, 40, 50, 255})
+		rl.DrawRectangleLinesEx({dialog_x, dialog_y, dialog_w, dialog_h}, 2, rl.Color{100, 60, 60, 255})
+
+		_, del_name := filepath.split(state.library_files[state.delete_index])
+		del_label := strings.clone_to_cstring(del_name, context.temp_allocator)
+		draw_text(state, "Delete this file?", dialog_x + 12, dialog_y + 10, 16, rl.Color{220, 220, 230, 255})
+		draw_text(state, del_label, dialog_x + 12, dialog_y + 30, 14, rl.Color{180, 180, 200, 255})
+
+		btn_w: f32 = 80
+		btn_h: f32 = 28
+		if rl.GuiButton({dialog_x + 20, dialog_y + dialog_h - btn_h - 12, btn_w, btn_h}, "Delete") {
+			delete_library_file(state, state.delete_index)
+			state.delete_confirm = false
+			state.delete_index = -1
+		}
+		if rl.GuiButton({dialog_x + dialog_w - btn_w - 20, dialog_y + dialog_h - btn_h - 12, btn_w, btn_h}, "Cancel") {
+			state.delete_confirm = false
+			state.delete_index = -1
+		}
+		return
+	}
+
 	rl.BeginScissorMode(i32(panel_x), i32(list_y), i32(panel_w), i32(panel_h - header_h - 4))
 
 	for file, i in state.library_files {
@@ -502,21 +826,143 @@ draw_library_panel :: proc(state: ^App_State, w: f32, h: f32) {
 			rl.DrawRectangleRec(item_rect, rl.Color{50, 50, 65, 255})
 		}
 
+		// Preview playing indicator
+		if state.preview_playing && state.preview_index == i {
+			rl.DrawRectangleRec({panel_x + 4, y, 3, item_h - 2}, rl.Color{60, 200, 80, 255})
+		}
+
 		_, name := filepath.split(file)
-		display := strings.clone_to_cstring(name, context.temp_allocator)
+		ext := filepath.ext(name)
+		stem := name[:len(name) - len(ext)]
 
-		// Truncate display if too wide
-		max_text_w := panel_w - 28
-		text_color := hovered ? rl.Color{255, 255, 255, 255} : rl.Color{200, 200, 215, 255}
-		draw_text(state, display, panel_x + 14, y + 8, 16, text_color)
+		// Inline rename mode
+		if state.rename_active && state.rename_index == i {
+			rename_w := panel_w - icons_w - 20
+			ext_cstr := strings.clone_to_cstring(ext, context.temp_allocator)
+			ext_w := measure_text(state, ext_cstr, 16)
+			box_w := rename_w - ext_w - 4
 
-		if hovered && rl.IsMouseButtonPressed(.LEFT) {
-			cpath := strings.clone_to_cstring(file, context.temp_allocator)
-			load_audio_file(state, cpath)
-			state.library_open = false
-			state.skip_waveform_click = true
-			rl.EndScissorMode()
-			return
+			committed, cancelled := draw_rename_input(state, {panel_x + 10, y + 4, box_w, item_h - 8})
+
+			// Show extension after edit box
+			draw_text(state, ext_cstr, panel_x + 10 + box_w + 4, y + 8, 16, rl.Color{120, 120, 140, 255})
+
+			if committed {
+				new_stem := string(cstring(raw_data(state.rename_buffer[:])))
+				if len(new_stem) > 0 {
+					new_name := strings.concatenate({new_stem, string(cstring(raw_data(state.rename_ext[:])))}, context.temp_allocator)
+					rename_library_file(state, i, new_name)
+				}
+				state.rename_active = false
+				state.rename_index = -1
+			} else if cancelled {
+				state.rename_active = false
+				state.rename_index = -1
+			}
+		} else {
+			// Normal display — filename text (click to load)
+			text_w := panel_w - icons_w - 20
+			display := strings.clone_to_cstring(name, context.temp_allocator)
+			text_color := hovered ? rl.Color{255, 255, 255, 255} : rl.Color{200, 200, 215, 255}
+			draw_text(state, display, panel_x + 14, y + 8, 16, text_color)
+
+			name_rect := rl.Rectangle{panel_x + 14, y, text_w, item_h - 2}
+			name_hovered := rl.CheckCollisionPointRec(mouse, name_rect)
+
+			if name_hovered && rl.IsMouseButtonPressed(.LEFT) {
+				cpath := strings.clone_to_cstring(file, context.temp_allocator)
+				stop_preview(state)
+				load_audio_file(state, cpath)
+				state.library_open = false
+				state.skip_waveform_click = true
+				rl.EndScissorMode()
+				return
+			}
+		}
+
+		// -- Play/Pause icon --
+		play_x := panel_x + panel_w - icons_w
+		play_y := y + (item_h - icon_sz) / 2
+		play_rect := rl.Rectangle{play_x, play_y, icon_sz, icon_sz}
+		play_hover := rl.CheckCollisionPointRec(mouse, play_rect)
+
+		if play_hover {
+			rl.DrawRectangleRounded(play_rect, 0.3, 4, rl.Color{60, 60, 75, 255})
+		}
+
+		if state.preview_playing && state.preview_index == i {
+			// Pause icon (two bars)
+			bar_w: f32 = 3
+			bar_h: f32 = 12
+			bar_gap: f32 = 4
+			bx := play_x + (icon_sz - bar_w * 2 - bar_gap) / 2
+			by := play_y + (icon_sz - bar_h) / 2
+			rl.DrawRectangleRec({bx, by, bar_w, bar_h}, rl.Color{240, 200, 40, 255})
+			rl.DrawRectangleRec({bx + bar_w + bar_gap, by, bar_w, bar_h}, rl.Color{240, 200, 40, 255})
+		} else {
+			// Play icon (triangle)
+			cx := play_x + icon_sz / 2
+			cy := play_y + icon_sz / 2
+			rl.DrawTriangle(
+				{cx - 4, cy - 6},
+				{cx - 4, cy + 6},
+				{cx + 6, cy},
+				rl.Color{60, 200, 80, 200},
+			)
+		}
+
+		if play_hover && rl.IsMouseButtonPressed(.LEFT) {
+			toggle_preview(state, i)
+		}
+
+		// -- Rename/edit icon --
+		edit_x := play_x + icon_sz + icon_gap
+		edit_y := y + (item_h - icon_sz) / 2
+		edit_rect := rl.Rectangle{edit_x, edit_y, icon_sz, icon_sz}
+		edit_hover := rl.CheckCollisionPointRec(mouse, edit_rect)
+
+		if edit_hover {
+			rl.DrawRectangleRounded(edit_rect, 0.3, 4, rl.Color{55, 55, 75, 255})
+		}
+
+		// Pencil icon
+		ec := edit_hover ? rl.Color{180, 200, 255, 255} : rl.Color{140, 160, 200, 200}
+		// Pencil body (diagonal line)
+		rl.DrawLineEx({edit_x + 6, edit_y + icon_sz - 7}, {edit_x + icon_sz - 6, edit_y + 5}, 2.5, ec)
+		// Pencil tip
+		rl.DrawTriangle(
+			{edit_x + 4, edit_y + icon_sz - 4},
+			{edit_x + 6, edit_y + icon_sz - 8},
+			{edit_x + 8, edit_y + icon_sz - 5},
+			ec,
+		)
+
+		if edit_hover && rl.IsMouseButtonPressed(.LEFT) {
+			start_rename(state, i, stem, ext)
+		}
+
+		// -- Trash icon --
+		trash_x := edit_x + icon_sz + icon_gap
+		trash_y := y + (item_h - icon_sz) / 2
+		trash_rect := rl.Rectangle{trash_x, trash_y, icon_sz, icon_sz}
+		trash_hover := rl.CheckCollisionPointRec(mouse, trash_rect)
+
+		if trash_hover {
+			rl.DrawRectangleRounded(trash_rect, 0.3, 4, rl.Color{75, 50, 50, 255})
+		}
+
+		// Draw trash can shape
+		tc := trash_hover ? rl.Color{240, 80, 80, 255} : rl.Color{180, 80, 80, 200}
+		// Lid
+		rl.DrawRectangleRec({trash_x + 4, trash_y + 5, icon_sz - 8, 2}, tc)
+		// Handle on lid
+		rl.DrawRectangleRec({trash_x + 9, trash_y + 3, icon_sz - 18, 2}, tc)
+		// Body
+		rl.DrawRectangleRec({trash_x + 6, trash_y + 8, icon_sz - 12, 12}, tc)
+
+		if trash_hover && rl.IsMouseButtonPressed(.LEFT) {
+			state.delete_confirm = true
+			state.delete_index = i
 		}
 	}
 

@@ -36,6 +36,12 @@ main :: proc() {
 		}
 
 		update_audio(&state)
+		if state.preview_playing {
+			rl.UpdateMusicStream(state.preview_music)
+			if !rl.IsMusicStreamPlaying(state.preview_music) {
+				stop_preview(&state)
+			}
+		}
 		update_waveform_input(&state)
 
 		rl.BeginDrawing()
@@ -50,6 +56,9 @@ main :: proc() {
 		free_all(context.temp_allocator)
 	}
 
+	if state.preview_playing {
+		stop_preview(&state)
+	}
 	if state.is_recording {
 		stop_recording(&state)
 	}

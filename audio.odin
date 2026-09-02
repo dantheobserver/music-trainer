@@ -210,6 +210,72 @@ download_from_url :: proc(state: ^App_State, url: string) {
 	}
 }
 
+stop_preview :: proc(state: ^App_State) {
+	if state.preview_playing {
+		rl.StopMusicStream(state.preview_music)
+		rl.UnloadMusicStream(state.preview_music)
+		state.preview_playing = false
+		state.preview_index = -1
+	}
+}
+
+toggle_preview :: proc(state: ^App_State, index: int) {
+	if state.preview_playing && state.preview_index == index {
+		stop_preview(state)
+		return
+	}
+
+	stop_preview(state)
+
+	path := strings.clone_to_cstring(state.library_files[index], context.temp_allocator)
+	music := rl.LoadMusicStream(path)
+	if music.stream.sampleRate == 0 do return
+
+	state.preview_music = music
+	state.preview_index = index
+	state.preview_playing = true
+	rl.PlayMusicStream(state.preview_music)
+	rl.SetMusicVolume(state.preview_music, state.volume)
+}
+
+delete_library_file :: proc(state: ^App_State, index: int) {
+	if index < 0 || index >= len(state.library_files) do return
+
+	// Stop preview if playing this file
+	if state.preview_playing && state.preview_index == index {
+		stop_preview(state)
+	}
+
+	file := state.library_files[index]
+	_ = os.remove(file)
+	delete(file)
+	ordered_remove(&state.library_files, index)
+
+	// Fix preview index if needed
+	if state.preview_index > index {
+		state.preview_index -= 1
+	}
+}
+
+rename_library_file :: proc(state: ^App_State, index: int, new_name: string) -> bool {
+	if index < 0 || index >= len(state.library_files) do return false
+	if len(new_name) == 0 do return false
+
+	old_path := state.library_files[index]
+	dir := get_download_dir()
+	new_path := strings.concatenate({dir, "/", new_name})
+
+	err := os.rename(old_path, new_path)
+	if err != nil {
+		delete(new_path)
+		return false
+	}
+
+	delete(old_path)
+	state.library_files[index] = new_path
+	return true
+}
+
 AUDIO_EXTENSIONS :: [?]string{".wav", ".mp3", ".flac", ".ogg"}
 
 scan_library :: proc(state: ^App_State) {

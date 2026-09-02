@@ -98,6 +98,26 @@ App_State :: struct {
 	library_files:   [dynamic]string,
 	library_scroll:  f32,
 
+	// Library preview
+	preview_music:   rl.Music,
+	preview_index:   int,
+	preview_playing: bool,
+
+	// Library rename
+	rename_index:      int,
+	rename_buffer:     [256]u8,
+	rename_active:     bool,
+	rename_ext:        [16]u8,
+	rename_cursor:     int,
+	rename_sel_start:  int,
+	rename_sel_end:    int,
+	rename_blink:      f32,
+	rename_last_click: f64,
+
+	// Library delete confirmation
+	delete_index:    int,
+	delete_confirm:  bool,
+
 	// Detection filters
 	confidence_threshold: f32,
 	min_freq_filter:      f32,
@@ -126,5 +146,8 @@ init_state :: proc() -> App_State {
 		confidence_threshold = 3.0,
 		min_freq_filter      = 60.0,
 		max_freq_filter      = 4000.0,
+		preview_index        = -1,
+		rename_index         = -1,
+		delete_index         = -1,
 	}
 }
