@@ -84,6 +84,17 @@ analyze_full_track :: proc(state: ^App_State) {
 		})
 	}
 
+	// Normalize confidence to 0-1 range
+	max_conf: f32 = 0
+	for &n in state.detected_notes {
+		if n.confidence > max_conf do max_conf = n.confidence
+	}
+	if max_conf > 0 {
+		for &n in &state.detected_notes {
+			n.confidence /= max_conf
+		}
+	}
+
 	fmt.printfln("Analyzed %d windows, detected %d notes", frame_count / HOP_SIZE, len(state.detected_notes))
 }
 

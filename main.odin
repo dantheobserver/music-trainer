@@ -62,6 +62,7 @@ main :: proc() {
 	if state.is_recording {
 		stop_recording(&state)
 	}
+	cleanup_stretched(&state)
 	if state.audio_loaded {
 		unload_audio(&state)
 	}

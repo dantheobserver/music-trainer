@@ -304,6 +304,32 @@ draw_controls :: proc(state: ^App_State, w: f32, h: f32) {
 	loop_label_w := measure_text(state, "Loop", f32(FONT_SIZE))
 	cursor += 22 + 8 + loop_label_w + gap
 
+	// -- Pitch Correct --
+	old_pitch_correct := state.pitch_correct
+	rl.GuiCheckBox({cursor, btn_y + 9, 22, 22}, "Pitch Correct", &state.pitch_correct)
+	pc_label_w := measure_text(state, "Pitch Correct", f32(FONT_SIZE))
+	cursor += 22 + 8 + pc_label_w + 8
+
+	// Handle pitch_correct toggle while playing
+	if state.pitch_correct != old_pitch_correct && state.is_playing {
+		if state.pitch_correct && state.playback_speed != 1.0 {
+			start_stretched_playback(state)
+		} else {
+			if state.has_stretched {
+				rl.StopMusicStream(state.stretched_music)
+			}
+			start_normal_playback(state)
+		}
+	}
+
+	// -- Reset --
+	reset_w: f32 = 56
+	reset_h: f32 = 26
+	if rl.GuiButton({cursor, btn_y + 7, reset_w, reset_h}, "Reset") {
+		reset_speed(state)
+	}
+	cursor += reset_w + gap
+
 	draw_sep(cursor, area_y)
 	cursor += gap
 
@@ -315,12 +341,22 @@ draw_controls :: proc(state: ^App_State, w: f32, h: f32) {
 	row1_y := area_y + 10
 	row2_y := area_y + 48
 
-	speed_label := rl.TextFormat("Speed: %.2fx", state.playback_speed)
+	pc_suffix: cstring = state.pitch_correct ? " [PC]" : ""
+	speed_label := rl.TextFormat("Speed: %.2fx%s", state.playback_speed, pc_suffix)
 	draw_text(state, speed_label, cursor, row1_y, 14, rl.Color{200, 200, 220, 255})
+	old_speed := state.playback_speed
 	rl.GuiSlider({cursor, row1_y + 18, bay_w, slider_h}, "", "", &state.playback_speed, 0.25, 2.0)
 
 	if state.is_playing {
-		rl.SetMusicPitch(state.music, state.playback_speed)
+		if state.pitch_correct {
+			speed_needs_update := state.has_stretched && state.stretched_speed != state.playback_speed
+			speed_needs_update = speed_needs_update || (!state.has_stretched && state.playback_speed != 1.0)
+			if speed_needs_update && !rl.IsMouseButtonDown(.LEFT) {
+				set_playback_speed(state, state.playback_speed)
+			}
+		} else if state.playback_speed != old_speed {
+			rl.SetMusicPitch(state.music, state.playback_speed)
+		}
 	}
 
 	vol_pct := rl.TextFormat("Vol: %d%%", i32(state.volume * 100))
@@ -329,6 +365,9 @@ draw_controls :: proc(state: ^App_State, w: f32, h: f32) {
 
 	if state.audio_loaded {
 		rl.SetMusicVolume(state.music, state.volume)
+		if state.has_stretched {
+			rl.SetMusicVolume(state.stretched_music, state.volume)
+		}
 	}
 
 	cursor += bay_w + gap
@@ -340,9 +379,10 @@ draw_controls :: proc(state: ^App_State, w: f32, h: f32) {
 	det_w := w - cursor - pad
 	det_w = math.clamp(det_w, 150, 350)
 
-	sens_label := rl.TextFormat("Sensitivity: %.1f", state.confidence_threshold)
+	sens_pct := i32(state.confidence_threshold * 100)
+	sens_label := rl.TextFormat("Sensitivity: %d%%", sens_pct)
 	draw_text(state, sens_label, cursor, row1_y, 14, rl.Color{180, 180, 200, 255})
-	rl.GuiSlider({cursor, row1_y + 18, det_w, slider_h}, "", "", &state.confidence_threshold, 1.0, 10.0)
+	rl.GuiSlider({cursor, row1_y + 18, det_w, slider_h}, "", "", &state.confidence_threshold, 0.0, 1.0)
 
 	// Freq range on second row, split in half
 	freq_half := (det_w - 16) / 2

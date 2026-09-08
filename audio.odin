@@ -61,6 +61,8 @@ load_audio_file :: proc(state: ^App_State, path: cstring) -> bool {
 unload_audio :: proc(state: ^App_State) {
 	if !state.audio_loaded do return
 
+	cleanup_stretched(state)
+
 	rl.StopMusicStream(state.music)
 	rl.UnloadWaveSamples(state.samples)
 	rl.UnloadWave(state.wave)
@@ -78,12 +80,25 @@ unload_audio :: proc(state: ^App_State) {
 update_audio :: proc(state: ^App_State) {
 	if !state.audio_loaded || !state.is_playing do return
 
-	rl.UpdateMusicStream(state.music)
-	state.current_time = rl.GetMusicTimePlayed(state.music)
+	if state.pitch_correct && state.has_stretched {
+		rl.UpdateMusicStream(state.stretched_music)
+		stretched_time := rl.GetMusicTimePlayed(state.stretched_music)
+		state.current_time = to_original_time(stretched_time, state.stretched_speed)
 
-	if state.loop_enabled && state.has_selection {
-		if state.current_time >= state.selection_end {
-			rl.SeekMusicStream(state.music, state.selection_start)
+		if state.loop_enabled && state.has_selection {
+			if state.current_time >= state.selection_end {
+				seek_pos := to_stretched_time(state.selection_start, state.stretched_speed)
+				rl.SeekMusicStream(state.stretched_music, seek_pos)
+			}
+		}
+	} else {
+		rl.UpdateMusicStream(state.music)
+		state.current_time = rl.GetMusicTimePlayed(state.music)
+
+		if state.loop_enabled && state.has_selection {
+			if state.current_time >= state.selection_end {
+				rl.SeekMusicStream(state.music, state.selection_start)
+			}
 		}
 	}
 }
@@ -92,45 +107,134 @@ toggle_playback :: proc(state: ^App_State) {
 	if !state.audio_loaded do return
 
 	if state.is_playing {
-		rl.PauseMusicStream(state.music)
+		if state.pitch_correct && state.has_stretched {
+			rl.PauseMusicStream(state.stretched_music)
+		} else {
+			rl.PauseMusicStream(state.music)
+		}
 		state.is_playing = false
 	} else {
-		if !rl.IsMusicStreamPlaying(state.music) {
-			// Stream is stopped — must PlayMusicStream then seek
-			rl.PlayMusicStream(state.music)
-			if state.loop_enabled && state.has_selection {
-				rl.SeekMusicStream(state.music, state.selection_start)
-			} else if state.current_time > 0 && state.current_time < state.duration {
-				rl.SeekMusicStream(state.music, state.current_time)
-			}
+		if state.pitch_correct && state.playback_speed != 1.0 {
+			start_stretched_playback(state)
 		} else {
-			rl.ResumeMusicStream(state.music)
+			start_normal_playback(state)
 		}
-		rl.SetMusicPitch(state.music, state.playback_speed)
-		rl.SetMusicVolume(state.music, state.volume)
 		state.is_playing = true
+	}
+}
+
+start_normal_playback :: proc(state: ^App_State) {
+	// Stop any stretched stream
+	if state.has_stretched {
+		rl.StopMusicStream(state.stretched_music)
+	}
+
+	if !rl.IsMusicStreamPlaying(state.music) {
+		rl.PlayMusicStream(state.music)
+		if state.loop_enabled && state.has_selection {
+			rl.SeekMusicStream(state.music, state.selection_start)
+		} else if state.current_time > 0 && state.current_time < state.duration {
+			rl.SeekMusicStream(state.music, state.current_time)
+		}
+	} else {
+		rl.ResumeMusicStream(state.music)
+	}
+	rl.SetMusicPitch(state.music, state.playback_speed)
+	rl.SetMusicVolume(state.music, state.volume)
+}
+
+start_stretched_playback :: proc(state: ^App_State) {
+	// Stop normal stream
+	rl.PauseMusicStream(state.music)
+
+	if !state.has_stretched || state.stretched_speed != state.playback_speed {
+		prepare_stretched_audio(state)
+	}
+	if !state.has_stretched do return
+
+	seek_time: f32
+	if state.loop_enabled && state.has_selection {
+		seek_time = to_stretched_time(state.selection_start, state.stretched_speed)
+	} else if state.current_time > 0 && state.current_time < state.duration {
+		seek_time = to_stretched_time(state.current_time, state.stretched_speed)
+	}
+
+	rl.PlayMusicStream(state.stretched_music)
+	rl.SetMusicPitch(state.stretched_music, 1.0)
+	rl.SetMusicVolume(state.stretched_music, state.volume)
+	if seek_time > 0 {
+		rl.SeekMusicStream(state.stretched_music, seek_time)
 	}
 }
 
 stop_playback :: proc(state: ^App_State) {
 	if !state.audio_loaded do return
 	rl.StopMusicStream(state.music)
+	if state.has_stretched {
+		rl.StopMusicStream(state.stretched_music)
+	}
 	state.is_playing = false
 	state.current_time = 0
 }
 
 set_playback_speed :: proc(state: ^App_State, speed: f32) {
+	old_speed := state.playback_speed
 	state.playback_speed = math.clamp(speed, 0.25, 2.0)
-	if state.is_playing {
+
+	if !state.is_playing do return
+
+	if state.pitch_correct && state.playback_speed != 1.0 {
+		if state.playback_speed != old_speed {
+			current := state.current_time
+			prepare_stretched_audio(state)
+			if state.has_stretched {
+				rl.PauseMusicStream(state.music)
+				rl.PlayMusicStream(state.stretched_music)
+				rl.SetMusicVolume(state.stretched_music, state.volume)
+				seek_pos := to_stretched_time(current, state.stretched_speed)
+				rl.SeekMusicStream(state.stretched_music, seek_pos)
+			}
+		}
+	} else {
 		rl.SetMusicPitch(state.music, state.playback_speed)
 	}
 }
 
-seek_relative :: proc(state: ^App_State, offset: f32) {
+seek_to_time :: proc(state: ^App_State, time: f32) {
 	if !state.audio_loaded do return
-	target := math.clamp(state.current_time + offset, 0, state.duration)
-	rl.SeekMusicStream(state.music, target)
+	target := math.clamp(time, 0, state.duration)
 	state.current_time = target
+
+	if state.pitch_correct && state.has_stretched {
+		stretched_pos := to_stretched_time(target, state.stretched_speed)
+		rl.SeekMusicStream(state.stretched_music, stretched_pos)
+	} else {
+		rl.SeekMusicStream(state.music, target)
+	}
+}
+
+seek_relative :: proc(state: ^App_State, offset: f32) {
+	seek_to_time(state, state.current_time + offset)
+}
+
+reset_speed :: proc(state: ^App_State) {
+	was_playing := state.is_playing
+	if was_playing {
+		if state.pitch_correct && state.has_stretched {
+			rl.StopMusicStream(state.stretched_music)
+		} else {
+			rl.PauseMusicStream(state.music)
+		}
+	}
+
+	cleanup_stretched(state)
+	state.playback_speed = 1.0
+	state.pitch_correct = false
+
+	if was_playing {
+		start_normal_playback(state)
+		state.is_playing = true
+	}
 }
 
 get_download_dir :: proc() -> string {

@@ -257,24 +257,16 @@ update_waveform_input :: proc(state: ^App_State) {
 			if state.selection_end - state.selection_start < 0.05 {
 				state.has_selection = false
 			} else {
-				// Seek to selection start and begin playback
-				rl.SeekMusicStream(state.music, state.selection_start)
-				state.current_time = state.selection_start
+				seek_to_time(state, state.selection_start)
 				if !state.is_playing {
-					rl.PlayMusicStream(state.music)
-					rl.SeekMusicStream(state.music, state.selection_start)
-					rl.SetMusicPitch(state.music, state.playback_speed)
-					rl.SetMusicVolume(state.music, state.volume)
-					state.is_playing = true
+					toggle_playback(state)
 				}
 				state.loop_enabled = true
 			}
 		} else if in_rect {
 			// Click without drag — seek to position
-			seek_time := screen_x_to_time(state, mouse.x)
-			seek_time = math.clamp(seek_time, 0, state.duration)
-			rl.SeekMusicStream(state.music, seek_time)
-			state.current_time = seek_time
+			click_time := screen_x_to_time(state, mouse.x)
+			seek_to_time(state, click_time)
 		}
 		state.drag_handle = .None
 	}
@@ -284,10 +276,8 @@ update_waveform_input :: proc(state: ^App_State) {
 
 	// Click to seek (right-click)
 	if in_rect && rl.IsMouseButtonPressed(.RIGHT) {
-		seek_time := screen_x_to_time(state, mouse.x)
-		seek_time = math.clamp(seek_time, 0, state.duration)
-		rl.SeekMusicStream(state.music, seek_time)
-		state.current_time = seek_time
+		rclick_time := screen_x_to_time(state, mouse.x)
+		seek_to_time(state, rclick_time)
 	}
 }
 

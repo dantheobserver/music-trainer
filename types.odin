@@ -6,7 +6,7 @@ FFT_SIZE :: 4096
 HOP_SIZE :: 2048
 MIN_FREQ :: 60.0
 MAX_FREQ :: 4000.0
-CONFIDENCE_THRESHOLD :: 3.0
+CONFIDENCE_THRESHOLD :: 0.3
 
 @(rodata)
 note_names := [12]string{"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"}
@@ -67,6 +67,12 @@ App_State :: struct {
 	volume:          f32,
 	loop_enabled:    bool,
 	current_time:    f32,
+	pitch_correct:   bool,
+
+	// Pitch-corrected stretched stream
+	stretched_music: rl.Music,
+	stretched_speed: f32,
+	has_stretched:   bool,
 
 	// Selection
 	selection_start: f32,
@@ -143,7 +149,7 @@ init_state :: proc() -> App_State {
 		view_duration        = 1.0,
 		cache_dirty          = true,
 		download_status      = "Ready",
-		confidence_threshold = 3.0,
+		confidence_threshold = 0.3,
 		min_freq_filter      = 60.0,
 		max_freq_filter      = 4000.0,
 		preview_index        = -1,
