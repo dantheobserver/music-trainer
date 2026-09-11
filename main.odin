@@ -45,7 +45,7 @@ main :: proc() {
 		update_waveform_input(&state)
 
 		rl.BeginDrawing()
-		rl.ClearBackground(rl.Color{30, 30, 35, 255})
+		rl.ClearBackground(BG_DEEP)
 
 		draw_ui(&state)
 		draw_waveform(&state)

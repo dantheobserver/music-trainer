@@ -1,5 +1,6 @@
 package music_trainer
 
+import "core:c"
 import "core:math"
 
 import rl "vendor:raylib"
@@ -51,15 +52,23 @@ draw_waveform :: proc(state: ^App_State) {
 	rect := state.waveform_rect
 	center_y := rect.y + rect.height * 0.5
 
-	// Background
-	rl.DrawRectangleRec(rect, rl.Color{20, 20, 25, 255})
+	// Background — subtle vertical gradient, rounded border
+	draw_gradient_vertical(rect, BG_PANEL, rl.Color{16, 18, 26, 255})
+	rl.DrawRectangleRoundedLinesEx(rect, 0.04, 4, 1, BORDER)
 
-	// Center line
-	rl.DrawLineV(
-		{rect.x, center_y},
-		{rect.x + rect.width, center_y},
-		rl.Color{60, 60, 70, 255},
-	)
+	// Faint time grid — accent-tinted
+	grid_count := int(state.view_duration / 5.0) + 1
+	grid_count = math.clamp(grid_count, 2, 20)
+	grid_step := state.view_duration / f32(grid_count)
+	for i in 0 ..= grid_count {
+		t := state.view_start + f32(i) * grid_step
+		x := time_to_screen_x(state, t)
+		if x > rect.x + 1 && x < rect.x + rect.width - 1 {
+			rl.DrawLineV({x, rect.y + 1}, {x, rect.y + rect.height - 1}, rl.Color{60, 80, 84, 55})
+		}
+	}
+
+	// Center line glow is drawn after the waveform so the ribbon shows through.
 
 	if state.cache_dirty {
 		compute_waveform_cache(state)
@@ -76,29 +85,43 @@ draw_waveform :: proc(state: ^App_State) {
 		sel_x1 = math.clamp(sel_x1, rect.x, rect.x + rect.width)
 		sel_x2 = math.clamp(sel_x2, rect.x, rect.x + rect.width)
 
-		rl.DrawRectangleRec(
-			{sel_x1, rect.y, sel_x2 - sel_x1, rect.height},
-			rl.Color{100, 149, 237, 40},
-		)
+		// Selection fill — soft gradient highlight
+		sel_rect := rl.Rectangle{sel_x1, rect.y, sel_x2 - sel_x1, rect.height}
+		draw_gradient_vertical(sel_rect, rl.Color{120, 210, 232, 30}, rl.Color{120, 210, 232, 16})
 
-		// Selection handles
-		handle_w: f32 = 4
-		rl.DrawRectangleRec({sel_x1 - handle_w / 2, rect.y, handle_w, rect.height}, rl.Color{100, 149, 237, 180})
-		rl.DrawRectangleRec({sel_x2 - handle_w / 2, rect.y, handle_w, rect.height}, rl.Color{100, 149, 237, 180})
+		// Selection handles — rounded with accent glow
+		handle_w: f32 = 5
+		handle_a := rl.Rectangle{sel_x1 - handle_w / 2, rect.y, handle_w, rect.height}
+		handle_b := rl.Rectangle{sel_x2 - handle_w / 2, rect.y, handle_w, rect.height}
+		draw_rounded_glow(handle_a, 0.5, SELECTION, 2, 2.0)
+		draw_rounded_glow(handle_b, 0.5, SELECTION, 2, 2.0)
+		rl.DrawRectangleRec(handle_a, SELECTION)
+		rl.DrawRectangleRec(handle_b, SELECTION)
 	}
 
-	// Waveform columns — colored by detected note
+	// Waveform — neon ribbon: per-column bloom + crisp core, colored by detected
+	// note, with amplitude-driven brightness so quiet parts recede.
 	half_h := rect.height * 0.5
 	notes := state.detected_notes[:]
 	note_cursor := 0
 	hop_time := f32(HOP_SIZE) / f32(state.sample_rate)
-	dim_color := rl.Color{50, 60, 55, 255}
+	// Muted teal for non-pitch sections — sits naturally in the theme
+	dim_color := rl.Color{52, 74, 78, 255}
 
-	for col in 0 ..< len(state.waveform_cache) {
+	n := len(state.waveform_cache)
+	top_pts := make([]rl.Vector2, n, context.temp_allocator)
+	bot_pts := make([]rl.Vector2, n, context.temp_allocator)
+
+	for col in 0 ..< n {
 		wc := state.waveform_cache[col]
 		x := rect.x + f32(col)
 		y_min := center_y - wc.max_val * half_h
 		y_max := center_y - wc.min_val * half_h
+		top := min(y_min, y_max)
+		bot := max(y_min, y_max)
+		if bot - top < 1.0 { bot = top + 1.0 }
+		top_pts[col] = {x, top}
+		bot_pts[col] = {x, bot}
 
 		col_time := screen_x_to_time(state, x)
 
@@ -111,40 +134,91 @@ draw_waveform :: proc(state: ^App_State) {
 		color := dim_color
 		best_dist: f32 = hop_time * 2
 		for i in max(0, note_cursor - 2) ..< min(len(notes), note_cursor + 4) {
-			n := notes[i]
-			if n.confidence < state.confidence_threshold do continue
-			if n.frequency < state.min_freq_filter || n.frequency > state.max_freq_filter do continue
-			dist := abs(n.time - col_time)
+			note := notes[i]
+			if note.confidence < state.confidence_threshold do continue
+			if note.frequency < state.min_freq_filter || note.frequency > state.max_freq_filter do continue
+			dist := abs(note.time - col_time)
 			if dist < best_dist {
 				best_dist = dist
-				nc := note_colors[n.note_index]
-				color = rl.Color{nc.r, nc.g, nc.b, 200}
+				nc := note_colors[note.note_index]
+				color = rl.Color{nc.r, nc.g, nc.b, 255}
 			}
 		}
 
-		if state.has_selection {
-			if col_time >= state.selection_start && col_time <= state.selection_end {
-				// Brighten selected region
-				color = rl.Color{
-					u8(min(i32(color.r) + 40, 255)),
-					u8(min(i32(color.g) + 40, 255)),
-					u8(min(i32(color.b) + 40, 255)),
-					255,
-				}
+		// Amplitude-driven brightness (0.45..1.0)
+		amp := abs(wc.max_val) + abs(wc.min_val)
+		bright := 0.45 + 0.55 * math.clamp(amp * 0.5, 0.0, 1.0)
+
+		if state.has_selection && col_time >= state.selection_start && col_time <= state.selection_end {
+			// Brighten + boost selected region
+			color = rl.Color{
+				u8(min(i32(color.r) + 45, 255)),
+				u8(min(i32(color.g) + 45, 255)),
+				u8(min(i32(color.b) + 45, 255)),
+				255,
 			}
+			bright = min(bright + 0.25, 1.0)
 		}
 
-		rl.DrawLineV({x, y_min}, {x, y_max}, color)
+		// Soft bloom halo around the column
+		glow_a := u8(f32(color.a) * bright * 0.30)
+		rl.DrawRectangleRec({x - 1, top, 3, bot - top}, rl.Color{color.r, color.g, color.b, glow_a})
+		// Crisp neon core
+		core_a := u8(f32(color.a) * bright * 0.95)
+		rl.DrawLineV({x, top}, {x, bot}, rl.Color{color.r, color.g, color.b, core_a})
 	}
 
-	// Playback cursor
+	// Envelope sheen — a faint accent outline tracing the waveform silhouette
+	if n > 1 {
+		sheen := rl.Color{ACCENT_BRIGHT.r, ACCENT_BRIGHT.g, ACCENT_BRIGHT.b, 70}
+		rl.DrawLineStrip(raw_data(top_pts), c.int(n), sheen)
+		rl.DrawLineStrip(raw_data(bot_pts), c.int(n), sheen)
+	}
+
+	// Center line — a soft glowing horizon drawn over the ribbon. Low peak
+	// alpha keeps it from overwhelming, so the waveform remains visible through it.
+	draw_hglow(rect.x + 1, rect.x + rect.width - 1, center_y, 7, ACCENT, 60)
+	rl.DrawLineEx(
+		{rect.x + 1, center_y},
+		{rect.x + rect.width - 1, center_y},
+		1, rl.Color{ACCENT_BRIGHT.r, ACCENT_BRIGHT.g, ACCENT_BRIGHT.b, 120},
+	)
+
+	// Playback cursor — a stylized neon scrubber: soft vertical glow tube, a
+	// bright 1px core, chevron markers capping the top/bottom, and a gently
+	// pulsing dot where it crosses the center line.
 	cursor_x := time_to_screen_x(state, state.current_time)
 	if cursor_x >= rect.x && cursor_x <= rect.x + rect.width {
+		// Neon tube glow + crisp core
+		draw_vglow(cursor_x, rect.y + 1, rect.y + rect.height - 1, 5, ACCENT, 90)
 		rl.DrawLineV(
-			{cursor_x, rect.y},
-			{cursor_x, rect.y + rect.height},
-			rl.Color{255, 80, 80, 255},
+			{cursor_x, rect.y + 1},
+			{cursor_x, rect.y + rect.height - 1},
+			ACCENT_BRIGHT,
 		)
+
+		// Top chevron (pointing down into the waveform)
+		rl.DrawTriangle(
+			{cursor_x - 6, rect.y - 1},
+			{cursor_x + 6, rect.y - 1},
+			{cursor_x, rect.y + 7},
+			ACCENT_BRIGHT,
+		)
+		// Bottom chevron (pointing up)
+		rl.DrawTriangle(
+			{cursor_x - 6, rect.y + rect.height + 1},
+			{cursor_x + 6, rect.y + rect.height + 1},
+			{cursor_x, rect.y + rect.height - 7},
+			ACCENT_BRIGHT,
+		)
+
+		// Pulsing center dot — subtle breathing glow with a bright core
+		pulse := 0.5 + 0.5 * math.sin(rl.GetTime() * 3.0)
+		halo_r := 5.0 + pulse * 2.5
+		halo_a := u8(120 + 80 * pulse)
+		rl.DrawCircle(i32(cursor_x), i32(center_y), f32(halo_r), rl.Color{ACCENT.r, ACCENT.g, ACCENT.b, halo_a})
+		rl.DrawCircle(i32(cursor_x), i32(center_y), 3, ACCENT_BRIGHT)
+		rl.DrawCircle(i32(cursor_x), i32(center_y), 1.5, rl.Color{255, 255, 255, 235})
 	}
 
 	// Time labels
@@ -159,7 +233,7 @@ draw_waveform :: proc(state: ^App_State) {
 		minutes := int(t) / 60
 		seconds := int(t) % 60
 		label := rl.TextFormat("%d:%02d", i32(minutes), i32(seconds))
-		draw_text(state, label, x - 10, rect.y + rect.height + 2, 13, rl.Color{150, 150, 160, 255})
+		draw_text(state, label, x - 10, rect.y + rect.height + 2, 13, TEXT_DIM)
 	}
 
 	draw_waveform_overlay(state)

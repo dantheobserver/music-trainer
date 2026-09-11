@@ -30,8 +30,9 @@ load_fonts :: proc(state: ^App_State) {
 	}
 }
 
-gui_color :: proc(hex: u32) -> c.int {
-	return transmute(c.int)hex
+color_to_hex :: proc(col: rl.Color) -> c.int {
+	// raygui's GetColor() reads hex as 0xRRGGBBAA (red in the high byte).
+	return cast(c.int)((u32(col.r) << 24) | (u32(col.g) << 16) | (u32(col.b) << 8) | u32(col.a))
 }
 
 setup_gui_style :: proc(state: ^App_State) {
@@ -42,15 +43,32 @@ setup_gui_style :: proc(state: ^App_State) {
 	rl.GuiSetStyle(.DEFAULT, c.int(rl.GuiDefaultProperty.TEXT_SIZE), FONT_SIZE)
 	rl.GuiSetStyle(.DEFAULT, c.int(rl.GuiDefaultProperty.TEXT_SPACING), 1)
 
-	rl.GuiSetStyle(.DEFAULT, c.int(rl.GuiControlProperty.TEXT_COLOR_NORMAL), gui_color(0xDDDDDDFF))
-	rl.GuiSetStyle(.DEFAULT, c.int(rl.GuiControlProperty.TEXT_COLOR_FOCUSED), gui_color(0xFFFFFFFF))
-	rl.GuiSetStyle(.DEFAULT, c.int(rl.GuiControlProperty.TEXT_COLOR_PRESSED), gui_color(0xFFFFFFFF))
+	rl.GuiSetStyle(.DEFAULT, c.int(rl.GuiControlProperty.TEXT_COLOR_NORMAL), color_to_hex(TEXT_PRI))
+	rl.GuiSetStyle(.DEFAULT, c.int(rl.GuiControlProperty.TEXT_COLOR_FOCUSED), color_to_hex(rl.Color{255, 255, 255, 255}))
+	rl.GuiSetStyle(.DEFAULT, c.int(rl.GuiControlProperty.TEXT_COLOR_PRESSED), color_to_hex(rl.Color{255, 255, 255, 255}))
 
-	rl.GuiSetStyle(.DEFAULT, c.int(rl.GuiControlProperty.BASE_COLOR_NORMAL), gui_color(0x2A2A35FF))
-	rl.GuiSetStyle(.DEFAULT, c.int(rl.GuiControlProperty.BASE_COLOR_FOCUSED), gui_color(0x3A3A48FF))
-	rl.GuiSetStyle(.DEFAULT, c.int(rl.GuiControlProperty.BASE_COLOR_PRESSED), gui_color(0x4A4A58FF))
-	rl.GuiSetStyle(.DEFAULT, c.int(rl.GuiControlProperty.BORDER_COLOR_NORMAL), gui_color(0x555566FF))
-	rl.GuiSetStyle(.DEFAULT, c.int(rl.GuiControlProperty.BORDER_COLOR_FOCUSED), gui_color(0x7788AAFF))
+	rl.GuiSetStyle(.DEFAULT, c.int(rl.GuiControlProperty.BASE_COLOR_NORMAL), color_to_hex(BG_CONTROL))
+	rl.GuiSetStyle(.DEFAULT, c.int(rl.GuiControlProperty.BASE_COLOR_FOCUSED), color_to_hex(BG_CONTROL_HI))
+	rl.GuiSetStyle(.DEFAULT, c.int(rl.GuiControlProperty.BASE_COLOR_PRESSED), color_to_hex(BG_CONTROL_PR))
+	rl.GuiSetStyle(.DEFAULT, c.int(rl.GuiControlProperty.BORDER_COLOR_NORMAL), color_to_hex(BORDER))
+	rl.GuiSetStyle(.DEFAULT, c.int(rl.GuiControlProperty.BORDER_COLOR_FOCUSED), color_to_hex(ACCENT))
+	rl.GuiSetStyle(.DEFAULT, c.int(rl.GuiControlProperty.BORDER_COLOR_PRESSED), color_to_hex(ACCENT_BRIGHT))
+
+	// Slider chrome — rounded track + turquoise glowing handle
+	rl.GuiSetStyle(.SLIDER, c.int(rl.GuiControlProperty.BASE_COLOR_NORMAL), color_to_hex(rl.Color{60, 66, 84, 255}))
+	rl.GuiSetStyle(.SLIDER, c.int(rl.GuiControlProperty.BASE_COLOR_FOCUSED), color_to_hex(rl.Color{70, 78, 100, 255}))
+	// NOTE: SLIDER BASE_COLOR_PRESSED is the handle's normal color in raygui.
+	rl.GuiSetStyle(.SLIDER, c.int(rl.GuiControlProperty.BASE_COLOR_PRESSED), color_to_hex(ACCENT))
+	rl.GuiSetStyle(.SLIDER, c.int(rl.GuiControlProperty.TEXT_COLOR_FOCUSED), color_to_hex(ACCENT_BRIGHT))
+	rl.GuiSetStyle(.SLIDER, c.int(rl.GuiControlProperty.TEXT_COLOR_PRESSED), color_to_hex(ACCENT_BRIGHT))
+	rl.GuiSetStyle(.SLIDER, c.int(rl.GuiControlProperty.BORDER_COLOR_NORMAL), color_to_hex(rl.Color{40, 44, 60, 255}))
+	rl.GuiSetStyle(.SLIDER, c.int(rl.GuiControlProperty.BORDER_COLOR_FOCUSED), color_to_hex(ACCENT))
+	rl.GuiSetStyle(.SLIDER, c.int(rl.GuiControlProperty.BORDER_COLOR_PRESSED), color_to_hex(ACCENT_BRIGHT))
+
+	// Checkbox accent
+	rl.GuiSetStyle(.CHECKBOX, c.int(rl.GuiControlProperty.BASE_COLOR_NORMAL), color_to_hex(rl.Color{60, 66, 84, 255}))
+	rl.GuiSetStyle(.CHECKBOX, c.int(rl.GuiControlProperty.BASE_COLOR_FOCUSED), color_to_hex(BG_CONTROL_HI))
+	rl.GuiSetStyle(.CHECKBOX, c.int(rl.GuiControlProperty.BORDER_COLOR_FOCUSED), color_to_hex(ACCENT))
 }
 
 // Helpers for font-based text
@@ -105,31 +123,51 @@ draw_ui :: proc(state: ^App_State) {
 
 	if !state.audio_loaded {
 		rect := state.waveform_rect
-		rl.DrawRectangleRec(rect, rl.Color{25, 25, 30, 255})
-		rl.DrawRectangleLinesEx(rect, 2, rl.Color{80, 80, 100, 255})
+		draw_gradient_vertical(rect, BG_PANEL, rl.Color{18, 20, 28, 255})
+		rl.DrawRectangleRoundedLinesEx(rect, 0.04, 4, 1, BORDER)
 
+		// Dashed-style drop hint border accent
 		hint: cstring = "Drop an audio file here"
 		hw := measure_text(state, hint, 24)
-		draw_text(state, hint, rect.x + rect.width / 2 - hw / 2, rect.y + rect.height / 2 - 20, 24, rl.Color{140, 140, 160, 255})
+		hx := rect.x + rect.width / 2 - hw / 2
+		hy := rect.y + rect.height / 2 - 20
+		// Accent glyph dot above the hint
+		rl.DrawCircle(i32(rect.x + rect.width / 2), i32(rect.y + rect.height / 2 - 56), 4, ACCENT)
+		draw_text(state, hint, hx, hy, 24, TEXT_SEC)
 
 		hint2: cstring = "or pass a file path as argument"
 		hw2 := measure_text(state, hint2, 18)
-		draw_text(state, hint2, rect.x + rect.width / 2 - hw2 / 2, rect.y + rect.height / 2 + 15, 18, rl.Color{100, 100, 120, 255})
+		draw_text(state, hint2, rect.x + rect.width / 2 - hw2 / 2, rect.y + rect.height / 2 + 15, 18, TEXT_DIM)
 	}
 
 	handle_keyboard(state)
 }
 
 draw_title_bar :: proc(state: ^App_State, w: f32) {
-	rl.DrawRectangleRec({0, 0, w, TITLE_HEIGHT}, rl.Color{22, 22, 28, 255})
-	draw_text_bold(state, "Music Trainer", 14, 11, 28, rl.Color{220, 220, 230, 255})
+	draw_gradient_vertical({0, 0, w, TITLE_HEIGHT}, BG_BAR, BG_BAR_LOWER)
+	draw_top_highlight({0, 0, w, TITLE_HEIGHT}, rl.Color{60, 66, 84, 255})
+	// Accent underline separating title from content
+	draw_hline(0, TITLE_HEIGHT - 1, w, rl.Color{48, 54, 72, 255})
 
-	// Library button
-	lib_btn_w: f32 = 80
+	// Accent mark beside the title
+	rl.DrawRectangleRec({14, 14, 4, 22}, ACCENT)
+	draw_text_bold(state, "Music Trainer", 26, 11, 28, TEXT_PRI)
+
+	// Library button (rounded, accent on hover)
+	lib_btn_w: f32 = 86
 	lib_btn_h: f32 = 32
 	lib_btn_x := w - lib_btn_w - 14
 	lib_btn_y: f32 = 9
-	if rl.GuiButton({lib_btn_x, lib_btn_y, lib_btn_w, lib_btn_h}, "Library") {
+	lib_rect := rl.Rectangle{lib_btn_x, lib_btn_y, lib_btn_w, lib_btn_h}
+	lib_hover := rl.CheckCollisionPointRec(rl.GetMousePosition(), lib_rect)
+	lib_bg := lib_hover ? lerp_color(BG_CONTROL_HI, ACCENT, 0.25) : BG_CONTROL
+	rl.DrawRectangleRounded(lib_rect, 0.3, 8, lib_bg)
+	rl.DrawRectangleRoundedLinesEx(lib_rect, 0.3, 8, 1, lib_hover ? ACCENT : BORDER)
+	lib_label_color := lib_hover ? TEXT_PRI : TEXT_SEC
+	lib_label: cstring = "Library"
+	lw := measure_text(state, lib_label, f32(FONT_SIZE))
+	draw_text(state, lib_label, lib_btn_x + (lib_btn_w - lw) / 2, lib_btn_y + 6, f32(FONT_SIZE), lib_label_color)
+	if lib_hover && rl.IsMouseButtonPressed(.LEFT) {
 		state.library_open = !state.library_open
 		if state.library_open {
 			scan_library(state)
@@ -140,7 +178,7 @@ draw_title_bar :: proc(state: ^App_State, w: f32) {
 		_, base_name := filepath.split(state.file_name)
 		display_name := strings.clone_to_cstring(base_name, context.temp_allocator)
 		nw := measure_text(state, display_name, 18)
-		draw_text(state, display_name, lib_btn_x - nw - 14, 16, 18, rl.Color{160, 160, 180, 255})
+		draw_text(state, display_name, lib_btn_x - nw - 16, 16, 18, TEXT_SEC)
 	}
 
 	if state.audio_loaded {
@@ -150,7 +188,12 @@ draw_title_bar :: proc(state: ^App_State, w: f32) {
 		total_sec := int(state.duration) % 60
 		time_str := rl.TextFormat("%d:%02d / %d:%02d", i32(minutes), i32(seconds), i32(total_min), i32(total_sec))
 		tw := measure_text(state, time_str, 20)
-		draw_text(state, time_str, w / 2 - tw / 2, 15, 20, rl.Color{200, 200, 220, 255})
+		tx := w / 2 - tw / 2
+		// Subtle pill behind the time readout
+		pill := rl.Rectangle{tx - 10, 14, tw + 20, 24}
+		rl.DrawRectangleRounded(pill, 0.4, 8, rl.Color{30, 34, 48, 200})
+		rl.DrawRectangleRoundedLinesEx(pill, 0.4, 8, 1, rl.Color{50, 56, 74, 200})
+		draw_text(state, time_str, tx, 17, 20, TEXT_PRI)
 	}
 }
 
@@ -202,8 +245,29 @@ draw_url_bar :: proc(state: ^App_State, w: f32) {
 	}
 }
 
-draw_sep :: proc(x: f32, area_y: f32) {
-	rl.DrawLineV({x, area_y + 14}, {x, area_y + CONTROLS_HEIGHT - 14}, rl.Color{55, 55, 70, 255})
+draw_sep :: proc(x: f32, area_y: f32, h: f32) {
+	// Soft vertical divider with a faint highlight on top/bottom
+	rl.DrawLineV({x, area_y + 14}, {x, area_y + h - 14}, rl.Color{40, 46, 62, 255})
+	rl.DrawLineV({x + 1, area_y + 14}, {x + 1, area_y + h - 14}, rl.Color{20, 22, 32, 255})
+}
+
+// Rounded transport button surface with hover lift + optional accent ring.
+draw_transport_btn :: proc(rect: rl.Rectangle, hovered: bool, accent: rl.Color, active: bool) -> rl.Color {
+	bg: rl.Color
+	if active {
+		bg = lerp_color(accent, BG_CONTROL, 0.7)
+	} else if hovered {
+		bg = BG_CONTROL_HI
+	} else {
+		bg = BG_CONTROL
+	}
+	rl.DrawRectangleRounded(rect, 0.22, 6, bg)
+	rl.DrawRectangleRoundedLinesEx(rect, 0.22, 6, 1, hovered ? accent : BORDER)
+	if hovered {
+		draw_rounded_glow(rect, 0.22, accent, 2, 2.0)
+	}
+	draw_top_highlight(rect, rl.Color{70, 78, 100, 200})
+	return bg
 }
 
 draw_controls :: proc(state: ^App_State, w: f32, h: f32) {
@@ -211,30 +275,25 @@ draw_controls :: proc(state: ^App_State, w: f32, h: f32) {
 	pad: f32 = 20
 	gap: f32 = 24
 
-	rl.DrawRectangleRec({0, area_y, w, CONTROLS_HEIGHT}, rl.Color{22, 22, 28, 255})
-	rl.DrawLineV({0, area_y}, {w, area_y}, rl.Color{50, 50, 60, 255})
+	draw_gradient_vertical({0, area_y, w, CONTROLS_HEIGHT}, BG_BAR_LOWER, BG_BAR)
+	draw_hline(0, area_y, w, rl.Color{48, 54, 72, 255})
 
-	btn_h: f32 = 40
 	btn_sz: f32 = 44
 	btn_y := area_y + (CONTROLS_HEIGHT - btn_sz) / 2
-	icon_pad: f32 = 12
 
 	// -- Play/Pause --
 	play_rect := rl.Rectangle{pad, btn_y, btn_sz, btn_sz}
 	play_hover := rl.CheckCollisionPointRec(rl.GetMousePosition(), play_rect)
-	play_bg: rl.Color = play_hover ? {60, 60, 75, 255} : {40, 40, 52, 255}
-	rl.DrawRectangleRounded(play_rect, 0.2, 4, play_bg)
-	rl.DrawRectangleRoundedLinesEx(play_rect, 0.2, 4, 1, rl.Color{80, 80, 100, 255})
-
+	draw_transport_btn(play_rect, play_hover, PLAY_COLOR, state.is_playing)
 	if state.is_playing {
-		// Pause icon: two vertical bars (yellow)
+		// Pause icon: two vertical bars
 		bar_w: f32 = 5
 		bar_h: f32 = 20
 		bar_gap: f32 = 6
 		bx := play_rect.x + (btn_sz - bar_w * 2 - bar_gap) / 2
 		by := play_rect.y + (btn_sz - bar_h) / 2
-		rl.DrawRectangleRec({bx, by, bar_w, bar_h}, rl.Color{240, 200, 40, 255})
-		rl.DrawRectangleRec({bx + bar_w + bar_gap, by, bar_w, bar_h}, rl.Color{240, 200, 40, 255})
+		rl.DrawRectangleRec({bx, by, bar_w, bar_h}, PAUSE_COLOR)
+		rl.DrawRectangleRec({bx + bar_w + bar_gap, by, bar_w, bar_h}, PAUSE_COLOR)
 	} else {
 		// Play icon: triangle (green)
 		cx := play_rect.x + btn_sz / 2
@@ -243,7 +302,7 @@ draw_controls :: proc(state: ^App_State, w: f32, h: f32) {
 			{cx - 7, cy - 10},
 			{cx - 7, cy + 10},
 			{cx + 10, cy},
-			rl.Color{60, 200, 80, 255},
+			PLAY_COLOR,
 		)
 	}
 	if play_hover && rl.IsMouseButtonPressed(.LEFT) {
@@ -254,38 +313,32 @@ draw_controls :: proc(state: ^App_State, w: f32, h: f32) {
 	// -- Stop --
 	stop_rect := rl.Rectangle{cursor, btn_y, btn_sz, btn_sz}
 	stop_hover := rl.CheckCollisionPointRec(rl.GetMousePosition(), stop_rect)
-	stop_bg: rl.Color = stop_hover ? {60, 60, 75, 255} : {40, 40, 52, 255}
-	rl.DrawRectangleRounded(stop_rect, 0.2, 4, stop_bg)
-	rl.DrawRectangleRoundedLinesEx(stop_rect, 0.2, 4, 1, rl.Color{80, 80, 100, 255})
+	draw_transport_btn(stop_rect, stop_hover, STOP_COLOR, false)
 	// Stop icon: square (red)
 	sq_sz: f32 = 16
 	rl.DrawRectangleRec(
 		{stop_rect.x + (btn_sz - sq_sz) / 2, stop_rect.y + (btn_sz - sq_sz) / 2, sq_sz, sq_sz},
-		rl.Color{220, 60, 60, 255},
+		STOP_COLOR,
 	)
 	if stop_hover && rl.IsMouseButtonPressed(.LEFT) {
 		stop_playback(state)
 	}
 	cursor += btn_sz + 8
 
-	// -- Record --
+	// -- Record (pulsing while active) --
 	rec_rect := rl.Rectangle{cursor, btn_y, btn_sz, btn_sz}
 	rec_hover := rl.CheckCollisionPointRec(rl.GetMousePosition(), rec_rect)
-	rec_bg: rl.Color
+	draw_transport_btn(rec_rect, rec_hover, RECORD_COLOR, state.is_recording)
 	if state.is_recording {
-		rec_bg = {80, 40, 50, 255}
-	} else if rec_hover {
-		rec_bg = {60, 60, 75, 255}
-	} else {
-		rec_bg = {40, 40, 52, 255}
+		pulse := 0.5 + 0.5 * math.sin(rl.GetTime() * 5.0)
+		draw_rounded_glow(rec_rect, 0.22, RECORD_COLOR, 3, f32(2.0 + pulse * 3.0))
 	}
-	rl.DrawRectangleRounded(rec_rect, 0.2, 4, rec_bg)
-	rl.DrawRectangleRoundedLinesEx(rec_rect, 0.2, 4, 1, rl.Color{80, 80, 100, 255})
 	// Record icon: circle (pink)
-	rec_color: rl.Color = state.is_recording ? {255, 160, 180, 255} : {230, 140, 160, 255}
+	rec_color: rl.Color = state.is_recording ? rl.Color{255, 170, 190, 255} : RECORD_COLOR
+	rec_radius: f32 = state.is_recording ? f32(9 + math.sin(rl.GetTime() * 5.0) * 1.5) : 9
 	rl.DrawCircle(
 		i32(rec_rect.x + btn_sz / 2), i32(rec_rect.y + btn_sz / 2),
-		9, rec_color,
+		rec_radius, rec_color,
 	)
 	if rec_hover && rl.IsMouseButtonPressed(.LEFT) {
 		if state.is_recording {
@@ -296,17 +349,23 @@ draw_controls :: proc(state: ^App_State, w: f32, h: f32) {
 	}
 	cursor += btn_sz + gap
 
-	draw_sep(cursor, area_y)
+	draw_sep(cursor, area_y, CONTROLS_HEIGHT)
 	cursor += gap
 
 	// -- Loop --
-	rl.GuiCheckBox({cursor, btn_y + 9, 22, 22}, "Loop", &state.loop_enabled)
+	loop_rect := rl.Rectangle{cursor, btn_y + 9, 22, 22}
+	loop_hover := rl.CheckCollisionPointRec(rl.GetMousePosition(), loop_rect)
+	if loop_hover do draw_rounded_glow(loop_rect, 0.3, ACCENT, 2, 2.0)
+	rl.GuiCheckBox(loop_rect, "Loop", &state.loop_enabled)
 	loop_label_w := measure_text(state, "Loop", f32(FONT_SIZE))
 	cursor += 22 + 8 + loop_label_w + gap
 
 	// -- Pitch Correct --
 	old_pitch_correct := state.pitch_correct
-	rl.GuiCheckBox({cursor, btn_y + 9, 22, 22}, "Pitch Correct", &state.pitch_correct)
+	pc_rect := rl.Rectangle{cursor, btn_y + 9, 22, 22}
+	pc_hover := rl.CheckCollisionPointRec(rl.GetMousePosition(), pc_rect)
+	if pc_hover do draw_rounded_glow(pc_rect, 0.3, ACCENT, 2, 2.0)
+	rl.GuiCheckBox(pc_rect, "Pitch Correct", &state.pitch_correct)
 	pc_label_w := measure_text(state, "Pitch Correct", f32(FONT_SIZE))
 	cursor += 22 + 8 + pc_label_w + 8
 
@@ -325,12 +384,18 @@ draw_controls :: proc(state: ^App_State, w: f32, h: f32) {
 	// -- Reset --
 	reset_w: f32 = 56
 	reset_h: f32 = 26
-	if rl.GuiButton({cursor, btn_y + 7, reset_w, reset_h}, "Reset") {
+	reset_rect := rl.Rectangle{cursor, btn_y + 7, reset_w, reset_h}
+	reset_hover := rl.CheckCollisionPointRec(rl.GetMousePosition(), reset_rect)
+	rl.DrawRectangleRounded(reset_rect, 0.3, 6, reset_hover ? BG_CONTROL_HI : BG_CONTROL)
+	rl.DrawRectangleRoundedLinesEx(reset_rect, 0.3, 6, 1, reset_hover ? ACCENT : BORDER)
+	rw := measure_text(state, "Reset", 16)
+	draw_text(state, "Reset", cursor + (reset_w - rw) / 2, btn_y + 13, 16, reset_hover ? TEXT_PRI : TEXT_SEC)
+	if reset_hover && rl.IsMouseButtonPressed(.LEFT) {
 		reset_speed(state)
 	}
 	cursor += reset_w + gap
 
-	draw_sep(cursor, area_y)
+	draw_sep(cursor, area_y, CONTROLS_HEIGHT)
 	cursor += gap
 
 	// -- Speed / Volume (stacked) --
@@ -343,7 +408,7 @@ draw_controls :: proc(state: ^App_State, w: f32, h: f32) {
 
 	pc_suffix: cstring = state.pitch_correct ? " [PC]" : ""
 	speed_label := rl.TextFormat("Speed: %.2fx%s", state.playback_speed, pc_suffix)
-	draw_text(state, speed_label, cursor, row1_y, 14, rl.Color{200, 200, 220, 255})
+	draw_text(state, speed_label, cursor, row1_y, 14, TEXT_PRI)
 	old_speed := state.playback_speed
 	rl.GuiSlider({cursor, row1_y + 18, bay_w, slider_h}, "", "", &state.playback_speed, 0.25, 2.0)
 
@@ -360,7 +425,7 @@ draw_controls :: proc(state: ^App_State, w: f32, h: f32) {
 	}
 
 	vol_pct := rl.TextFormat("Vol: %d%%", i32(state.volume * 100))
-	draw_text(state, vol_pct, cursor, row2_y, 14, rl.Color{200, 200, 220, 255})
+	draw_text(state, vol_pct, cursor, row2_y, 14, TEXT_PRI)
 	rl.GuiSlider({cursor, row2_y + 18, bay_w, slider_h}, "", "", &state.volume, 0.0, 1.0)
 
 	if state.audio_loaded {
@@ -372,7 +437,7 @@ draw_controls :: proc(state: ^App_State, w: f32, h: f32) {
 
 	cursor += bay_w + gap
 
-	draw_sep(cursor, area_y)
+	draw_sep(cursor, area_y, CONTROLS_HEIGHT)
 	cursor += gap
 
 	// -- Detection filters (stacked) --
@@ -381,7 +446,7 @@ draw_controls :: proc(state: ^App_State, w: f32, h: f32) {
 
 	sens_pct := i32(state.confidence_threshold * 100)
 	sens_label := rl.TextFormat("Sensitivity: %d%%", sens_pct)
-	draw_text(state, sens_label, cursor, row1_y, 14, rl.Color{180, 180, 200, 255})
+	draw_text(state, sens_label, cursor, row1_y, 14, TEXT_SEC)
 	rl.GuiSlider({cursor, row1_y + 18, det_w, slider_h}, "", "", &state.confidence_threshold, 0.0, 1.0)
 
 	// Freq range on second row, split in half
@@ -389,33 +454,39 @@ draw_controls :: proc(state: ^App_State, w: f32, h: f32) {
 
 	min_note, _, min_oct, _ := frequency_to_note(f64(state.min_freq_filter))
 	min_label := rl.TextFormat("Min: %dHz (%s%d)", i32(state.min_freq_filter), strings.clone_to_cstring(min_note, context.temp_allocator), i32(min_oct))
-	draw_text(state, min_label, cursor, row2_y, 12, rl.Color{170, 170, 190, 255})
+	draw_text(state, min_label, cursor, row2_y, 12, TEXT_DIM)
 	rl.GuiSlider({cursor, row2_y + 16, freq_half, slider_h}, "", "", &state.min_freq_filter, 20.0, 2000.0)
 
 	max_x := cursor + freq_half + 16
 	max_note, _, max_oct, _ := frequency_to_note(f64(state.max_freq_filter))
 	max_label := rl.TextFormat("Max: %dHz (%s%d)", i32(state.max_freq_filter), strings.clone_to_cstring(max_note, context.temp_allocator), i32(max_oct))
-	draw_text(state, max_label, max_x, row2_y, 12, rl.Color{170, 170, 190, 255})
+	draw_text(state, max_label, max_x, row2_y, 12, TEXT_DIM)
 	rl.GuiSlider({max_x, row2_y + 16, freq_half, slider_h}, "", "", &state.max_freq_filter, 200.0, 8000.0)
 }
 
 draw_status_bar :: proc(state: ^App_State, w: f32, h: f32) {
 	y := h - STATUS_HEIGHT
-	rl.DrawRectangleRec({0, y, w, STATUS_HEIGHT}, rl.Color{22, 22, 28, 255})
-	draw_text(state, state.download_status, 14, y + 5, 16, rl.Color{160, 160, 180, 255})
+	draw_gradient_vertical({0, y, w, STATUS_HEIGHT}, BG_BAR_LOWER, BG_BAR)
+	draw_hline(0, y, w, rl.Color{48, 54, 72, 255})
+	draw_text(state, state.download_status, 14, y + 7, 16, TEXT_SEC)
 
 	if state.has_selection {
 		sel_dur := state.selection_end - state.selection_start
 		sel_str := rl.TextFormat("Selection: %.1fs - %.1fs (%.1fs)", state.selection_start, state.selection_end, sel_dur)
 		sw := measure_text(state, sel_str, 16)
-		draw_text(state, sel_str, w - sw - 14, y + 5, 16, rl.Color{100, 160, 240, 255})
+		sx := w - sw - 14
+		// Selection pill in the status bar
+		pill := rl.Rectangle{sx - 10, y + 4, sw + 20, 22}
+		rl.DrawRectangleRounded(pill, 0.4, 8, rl.Color{40, 60, 88, 200})
+		rl.DrawRectangleRoundedLinesEx(pill, 0.4, 8, 1, fade(SELECTION, 140))
+		draw_text(state, sel_str, sx, y + 7, 16, rl.Color{180, 210, 250, 255})
 	}
 }
 
 draw_note_display :: proc(state: ^App_State) {
 	rect := state.note_display_rect
-	rl.DrawRectangleRec(rect, rl.Color{16, 16, 20, 255})
-	rl.DrawRectangleLinesEx(rect, 1, rl.Color{50, 50, 60, 255})
+	draw_gradient_vertical(rect, BG_PANEL, rl.Color{14, 16, 22, 255})
+	rl.DrawRectangleRoundedLinesEx(rect, 0.05, 4, 1, BORDER)
 
 	if !state.audio_loaded || len(state.detected_notes) == 0 do return
 
@@ -425,7 +496,7 @@ draw_note_display :: proc(state: ^App_State) {
 	timeline_rect := rl.Rectangle{rect.x, rect.y, rect.width - current_panel_w, rect.height}
 
 	sep_x := rect.x + timeline_rect.width
-	rl.DrawLineV({sep_x, rect.y + 8}, {sep_x, rect.y + rect.height - 8}, rl.Color{50, 50, 65, 255})
+	rl.DrawLineV({sep_x, rect.y + 8}, {sep_x, rect.y + rect.height - 8}, rl.Color{40, 46, 62, 255})
 
 	// -- Timeline notes --
 	view_end := state.view_start + state.view_duration
@@ -449,6 +520,7 @@ draw_note_display :: proc(state: ^App_State) {
 		note_label := rl.TextFormat("%s%d", strings.clone_to_cstring(note.note_name, context.temp_allocator), i32(note.octave))
 
 		rl.DrawLineV({x, marker_top}, {x, rect.y + rect.height * 0.48}, rl.Color{color.r, color.g, color.b, 100})
+		rl.DrawCircle(i32(x), i32(marker_top), 2, rl.Color{color.r, color.g, color.b, 200})
 		draw_text(state, note_label, x - 10, label_y, 17, color)
 
 		last_drawn_x = x
@@ -465,6 +537,9 @@ draw_note_display :: proc(state: ^App_State) {
 			lw := measure_text_bold(state, current_label, 44)
 			cx := sep_x + (current_panel_w - lw) / 2
 			cy := rect.y + 14
+			// Soft glow behind the current note label
+			glow_rect := rl.Rectangle{cx - 8, cy - 4, lw + 16, 52}
+			draw_rounded_glow(glow_rect, 0.3, color, 3, 3.0)
 			draw_text_bold(state, current_label, cx, cy, 44, color)
 
 			freq_label := rl.TextFormat("%.1f Hz", note.frequency)
@@ -777,21 +852,32 @@ draw_library_panel :: proc(state: ^App_State, w: f32, h: f32) {
 	panel_h := h - TITLE_HEIGHT
 
 	// Dim background
-	rl.DrawRectangleRec({0, 0, panel_x, h}, rl.Color{0, 0, 0, 80})
+	rl.DrawRectangleRec({0, 0, panel_x, h}, rl.Color{0, 0, 0, 100})
 
-	// Panel background
-	rl.DrawRectangleRec({panel_x, panel_y, panel_w, panel_h}, rl.Color{28, 28, 36, 255})
-	rl.DrawLineV({panel_x, panel_y}, {panel_x, panel_y + panel_h}, rl.Color{60, 60, 80, 255})
+	// Panel background with gradient + left accent edge
+	draw_gradient_vertical({panel_x, panel_y, panel_w, panel_h}, BG_PANEL, rl.Color{22, 24, 32, 255})
+	rl.DrawLineV({panel_x, panel_y}, {panel_x, panel_y + panel_h}, BORDER_FOCUS)
 
 	// Header
 	header_h: f32 = 40
-	draw_text_bold(state, "Library", panel_x + 14, panel_y + 8, 24, rl.Color{220, 220, 230, 255})
+	rl.DrawRectangleRec({panel_x, panel_y, panel_w, header_h}, rl.Color{0, 0, 0, 40})
+	rl.DrawRectangleRec({panel_x + 14, panel_y + 12, 4, 18}, ACCENT)
+	draw_text_bold(state, "Library", panel_x + 26, panel_y + 8, 24, TEXT_PRI)
 
-	// Close button
+	// Close button (rounded)
 	close_sz: f32 = 28
 	close_x := panel_x + panel_w - close_sz - 8
 	close_y := panel_y + 6
-	if rl.GuiButton({close_x, close_y, close_sz, close_sz}, "X") {
+	close_rect := rl.Rectangle{close_x, close_y, close_sz, close_sz}
+	close_hover := rl.CheckCollisionPointRec(rl.GetMousePosition(), close_rect)
+	rl.DrawRectangleRounded(close_rect, 0.3, 6, close_hover ? BG_CONTROL_HI : BG_CONTROL)
+	rl.DrawRectangleRoundedLinesEx(close_rect, 0.3, 6, 1, close_hover ? STOP_COLOR : BORDER)
+	if close_hover do draw_rounded_glow(close_rect, 0.3, STOP_COLOR, 2, 2.0)
+	// X mark
+	xc := close_hover ? rl.Color{240, 200, 200, 255} : TEXT_SEC
+	rl.DrawLineEx({close_x + 9, close_y + 9}, {close_x + close_sz - 9, close_y + close_sz - 9}, 2, xc)
+	rl.DrawLineEx({close_x + close_sz - 9, close_y + 9}, {close_x + 9, close_y + close_sz - 9}, 2, xc)
+	if close_hover && rl.IsMouseButtonPressed(.LEFT) {
 		state.library_open = false
 		state.rename_active = false
 		state.delete_confirm = false
@@ -808,9 +894,9 @@ draw_library_panel :: proc(state: ^App_State, w: f32, h: f32) {
 	mouse := rl.GetMousePosition()
 
 	if len(state.library_files) == 0 {
-		draw_text(state, "No audio files found", panel_x + 14, list_y + 10, 16, rl.Color{120, 120, 140, 255})
+		draw_text(state, "No audio files found", panel_x + 14, list_y + 10, 16, TEXT_DIM)
 		dir_str := rl.TextFormat("in ~/Music/music_trainer/")
-		draw_text(state, dir_str, panel_x + 14, list_y + 32, 14, rl.Color{90, 90, 110, 255})
+		draw_text(state, dir_str, panel_x + 14, list_y + 32, 14, rl.Color{80, 86, 110, 255})
 		return
 	}
 
@@ -832,13 +918,13 @@ draw_library_panel :: proc(state: ^App_State, w: f32, h: f32) {
 		dialog_x := panel_x + (panel_w - dialog_w) / 2
 		dialog_y := panel_y + panel_h / 2 - dialog_h / 2
 
-		rl.DrawRectangleRec({dialog_x, dialog_y, dialog_w, dialog_h}, rl.Color{40, 40, 50, 255})
-		rl.DrawRectangleLinesEx({dialog_x, dialog_y, dialog_w, dialog_h}, 2, rl.Color{100, 60, 60, 255})
+		rl.DrawRectangleRec({dialog_x, dialog_y, dialog_w, dialog_h}, rl.Color{34, 36, 48, 255})
+		rl.DrawRectangleRoundedLinesEx({dialog_x, dialog_y, dialog_w, dialog_h}, 0.1, 6, 2, rl.Color{120, 70, 75, 255})
 
 		_, del_name := filepath.split(state.library_files[state.delete_index])
 		del_label := strings.clone_to_cstring(del_name, context.temp_allocator)
-		draw_text(state, "Delete this file?", dialog_x + 12, dialog_y + 10, 16, rl.Color{220, 220, 230, 255})
-		draw_text(state, del_label, dialog_x + 12, dialog_y + 30, 14, rl.Color{180, 180, 200, 255})
+		draw_text(state, "Delete this file?", dialog_x + 12, dialog_y + 12, 16, TEXT_PRI)
+		draw_text(state, del_label, dialog_x + 12, dialog_y + 32, 14, TEXT_SEC)
 
 		btn_w: f32 = 80
 		btn_h: f32 = 28
@@ -864,12 +950,12 @@ draw_library_panel :: proc(state: ^App_State, w: f32, h: f32) {
 		hovered := rl.CheckCollisionPointRec(mouse, item_rect)
 
 		if hovered {
-			rl.DrawRectangleRec(item_rect, rl.Color{50, 50, 65, 255})
+			rl.DrawRectangleRounded(item_rect, 0.2, 4, BG_CONTROL_HI)
 		}
 
 		// Preview playing indicator
 		if state.preview_playing && state.preview_index == i {
-			rl.DrawRectangleRec({panel_x + 4, y, 3, item_h - 2}, rl.Color{60, 200, 80, 255})
+			rl.DrawRectangleRounded({panel_x + 4, y + 4, 3, item_h - 10}, 0.5, 4, PLAY_COLOR)
 		}
 
 		_, name := filepath.split(file)
@@ -904,7 +990,7 @@ draw_library_panel :: proc(state: ^App_State, w: f32, h: f32) {
 			// Normal display — filename text (click to load)
 			text_w := panel_w - icons_w - 20
 			display := strings.clone_to_cstring(name, context.temp_allocator)
-			text_color := hovered ? rl.Color{255, 255, 255, 255} : rl.Color{200, 200, 215, 255}
+			text_color := hovered ? TEXT_PRI : TEXT_SEC
 			draw_text(state, display, panel_x + 14, y + 8, 16, text_color)
 
 			name_rect := rl.Rectangle{panel_x + 14, y, text_w, item_h - 2}
@@ -928,7 +1014,7 @@ draw_library_panel :: proc(state: ^App_State, w: f32, h: f32) {
 		play_hover := rl.CheckCollisionPointRec(mouse, play_rect)
 
 		if play_hover {
-			rl.DrawRectangleRounded(play_rect, 0.3, 4, rl.Color{60, 60, 75, 255})
+			rl.DrawRectangleRounded(play_rect, 0.3, 4, BG_CONTROL_HI)
 		}
 
 		if state.preview_playing && state.preview_index == i {
@@ -963,7 +1049,7 @@ draw_library_panel :: proc(state: ^App_State, w: f32, h: f32) {
 		edit_hover := rl.CheckCollisionPointRec(mouse, edit_rect)
 
 		if edit_hover {
-			rl.DrawRectangleRounded(edit_rect, 0.3, 4, rl.Color{55, 55, 75, 255})
+			rl.DrawRectangleRounded(edit_rect, 0.3, 4, BG_CONTROL_HI)
 		}
 
 		// Pencil icon
@@ -989,7 +1075,7 @@ draw_library_panel :: proc(state: ^App_State, w: f32, h: f32) {
 		trash_hover := rl.CheckCollisionPointRec(mouse, trash_rect)
 
 		if trash_hover {
-			rl.DrawRectangleRounded(trash_rect, 0.3, 4, rl.Color{75, 50, 50, 255})
+			rl.DrawRectangleRounded(trash_rect, 0.3, 4, rl.Color{70, 38, 42, 255})
 		}
 
 		// Draw trash can shape
