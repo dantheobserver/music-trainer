@@ -395,7 +395,10 @@ update_waveform_input :: proc(state: ^App_State) {
 		}
 	}
 
-	if in_rect && rl.IsMouseButtonDown(.LEFT) && !state.is_selecting {
+	// A press that started over the overlay bar must never begin a selection —
+	// click_start_x would be stale from an earlier waveform click and spawn a
+	// phantom selection.
+	if in_rect && rl.IsMouseButtonDown(.LEFT) && !state.is_selecting && !state.skip_waveform_click {
 		// Start selecting only after exceeding drag threshold
 		if abs(mouse.x - state.click_start_x) >= DRAG_THRESHOLD {
 			state.is_selecting = true
@@ -406,6 +409,11 @@ update_waveform_input :: proc(state: ^App_State) {
 	if state.is_selecting && rl.IsMouseButtonDown(.LEFT) {
 		drag_time := screen_x_to_time(state, mouse.x)
 		drag_time = math.clamp(drag_time, 0, state.duration)
+		if is_isolated(state) {
+			// Selections made in an isolated view stay within the region
+			top := state.isolation_stack[len(state.isolation_stack) - 1]
+			drag_time = math.clamp(drag_time, top.selection_start, top.selection_end)
+		}
 
 		switch state.drag_handle {
 		case .Left:
@@ -417,32 +425,32 @@ update_waveform_input :: proc(state: ^App_State) {
 		}
 	}
 
-	if rl.IsMouseButtonReleased(.LEFT) && !state.skip_waveform_click {
-		if state.is_selecting {
-			state.is_selecting = false
-			state.drag_handle = .None
-
-			if state.selection_start > state.selection_end {
-				state.selection_start, state.selection_end = state.selection_end, state.selection_start
-			}
-
-			if state.selection_end - state.selection_start < 0.05 {
-				state.has_selection = false
-			} else {
-				seek_to_time(state, state.selection_start)
-				if !state.is_playing {
-					toggle_playback(state)
-				}
-				state.loop_enabled = true
-			}
-		} else if in_rect {
-			// Click without drag — seek to position
-			click_time := screen_x_to_time(state, mouse.x)
-			seek_to_time(state, click_time)
-		}
-		state.drag_handle = .None
-	}
+	// Release: commit the interaction only when it started on the waveform;
+	// transient drag state unwinds either way so it can never stick.
 	if rl.IsMouseButtonReleased(.LEFT) {
+		if !state.skip_waveform_click {
+			if state.is_selecting {
+				if state.selection_start > state.selection_end {
+					state.selection_start, state.selection_end = state.selection_end, state.selection_start
+				}
+
+				if state.selection_end - state.selection_start < MIN_SELECTION_DUR {
+					state.has_selection = false
+				} else {
+					seek_to_time(state, state.selection_start)
+					if !state.is_playing {
+						toggle_playback(state)
+					}
+					state.loop_enabled = true
+				}
+			} else if in_rect {
+				// Click without drag — seek to position
+				click_time := screen_x_to_time(state, mouse.x)
+				seek_to_time(state, click_time)
+			}
+		}
+		state.is_selecting = false
+		state.drag_handle = .None
 		state.skip_waveform_click = false
 	}
 
@@ -524,18 +532,34 @@ is_isolated :: proc(state: ^App_State) -> bool {
 zoom_to_selection :: proc(state: ^App_State) {
 	if !state.has_selection do return
 
-	// Push current state onto stack
+	// Reject degenerate selections — isolating one would zoom into a sliver.
+	// Clearing here also makes a phantom Isolate button heal itself.
+	if state.selection_end - state.selection_start < MIN_SELECTION_DUR {
+		state.has_selection = false
+		return
+	}
+
+	// Push the parent state onto the stack — restoring unwinds to this snapshot
 	append(&state.isolation_stack, Isolation_Level{
 		view_start      = state.view_start,
 		view_duration   = state.view_duration,
 		selection_start = state.selection_start,
 		selection_end   = state.selection_end,
 		has_selection   = state.has_selection,
+		loop_enabled    = state.loop_enabled,
 	})
 
+	// Entering isolation is a new state: the selection is absorbed into the
+	// region itself (the whole region loops), so clear it.
 	state.view_start = state.selection_start
 	state.view_duration = state.selection_end - state.selection_start
 	state.has_selection = false
+
+	// Keep the playhead inside the new region — it must live within the
+	// isolated state's bounds.
+	if state.current_time < state.view_start || state.current_time > state.view_start + state.view_duration {
+		seek_to_time(state, state.view_start)
+	}
 
 	clamp_view(state)
 	state.cache_dirty = true
@@ -549,11 +573,12 @@ isolate_restore :: proc(state: ^App_State) {
 	prev := state.isolation_stack[n - 1]
 	pop(&state.isolation_stack)
 
-	state.view_start = prev.view_start
-	state.view_duration = prev.view_duration
+	state.view_start      = prev.view_start
+	state.view_duration   = prev.view_duration
 	state.selection_start = prev.selection_start
-	state.selection_end = prev.selection_end
-	state.has_selection = prev.has_selection
+	state.selection_end   = prev.selection_end
+	state.has_selection   = prev.has_selection
+	state.loop_enabled    = prev.loop_enabled
 
 	clamp_view(state)
 	state.cache_dirty = true
@@ -565,11 +590,12 @@ zoom_out_full :: proc(state: ^App_State) {
 		first := state.isolation_stack[0]
 		clear(&state.isolation_stack)
 
-		state.view_start = 0
-		state.view_duration = state.duration
+		state.view_start      = 0
+		state.view_duration   = state.duration
 		state.selection_start = first.selection_start
-		state.selection_end = first.selection_end
-		state.has_selection = first.has_selection
+		state.selection_end   = first.selection_end
+		state.has_selection   = first.has_selection
+		state.loop_enabled    = first.loop_enabled
 	} else {
 		state.view_start = 0
 		state.view_duration = state.duration

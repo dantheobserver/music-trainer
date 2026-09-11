@@ -77,21 +77,27 @@ unload_audio :: proc(state: ^App_State) {
 	state.current_time = 0
 }
 
+// Active loop region for the current playback state.
+//
+// Isolation is its own state: freshly isolated, the whole region loops;
+// once a new selection is made inside the isolated view, that selection
+// becomes the loop. Without isolation, the loop is the current selection
+// and only when Loop is enabled.
+active_loop_bounds :: proc(state: ^App_State) -> (start, end: f32, loops: bool) {
+	if is_isolated(state) {
+		if state.has_selection {
+			return state.selection_start, state.selection_end, true
+		}
+		top := state.isolation_stack[len(state.isolation_stack) - 1]
+		return top.selection_start, top.selection_end, true
+	}
+	return state.selection_start, state.selection_end, state.loop_enabled && state.has_selection
+}
+
 update_audio :: proc(state: ^App_State) {
 	if !state.audio_loaded || !state.is_playing do return
 
-	isolated := is_isolated(state)
-	should_loop := (state.loop_enabled && state.has_selection) || isolated
-
-	loop_start, loop_end: f32
-	if isolated {
-		top := state.isolation_stack[len(state.isolation_stack) - 1]
-		loop_start = top.selection_start
-		loop_end = top.selection_end
-	} else {
-		loop_start = state.selection_start
-		loop_end = state.selection_end
-	}
+	loop_start, loop_end, should_loop := active_loop_bounds(state)
 
 	if state.pitch_correct && state.has_stretched {
 		rl.UpdateMusicStream(state.stretched_music)
@@ -140,7 +146,16 @@ start_normal_playback :: proc(state: ^App_State) {
 
 	if !rl.IsMusicStreamPlaying(state.music) {
 		rl.PlayMusicStream(state.music)
-		if state.loop_enabled && state.has_selection {
+		if is_isolated(state) {
+			// Isolated view: playback must live inside the region — resume the
+			// playhead if it is inside, otherwise start at the region start.
+			loop_start, loop_end, _ := active_loop_bounds(state)
+			if state.current_time < loop_start || state.current_time >= loop_end {
+				rl.SeekMusicStream(state.music, loop_start)
+			} else {
+				rl.SeekMusicStream(state.music, state.current_time)
+			}
+		} else if state.loop_enabled && state.has_selection {
 			rl.SeekMusicStream(state.music, state.selection_start)
 		} else if state.current_time > 0 && state.current_time < state.duration {
 			rl.SeekMusicStream(state.music, state.current_time)
@@ -162,7 +177,16 @@ start_stretched_playback :: proc(state: ^App_State) {
 	if !state.has_stretched do return
 
 	seek_time: f32
-	if state.loop_enabled && state.has_selection {
+	if is_isolated(state) {
+		// Isolated view: resume inside the region, or start at the region start
+		// if the playhead is outside it.
+		loop_start, loop_end, _ := active_loop_bounds(state)
+		if state.current_time < loop_start || state.current_time >= loop_end {
+			seek_time = to_stretched_time(loop_start, state.stretched_speed)
+		} else {
+			seek_time = to_stretched_time(state.current_time, state.stretched_speed)
+		}
+	} else if state.loop_enabled && state.has_selection {
 		seek_time = to_stretched_time(state.selection_start, state.stretched_speed)
 	} else if state.current_time > 0 && state.current_time < state.duration {
 		seek_time = to_stretched_time(state.current_time, state.stretched_speed)

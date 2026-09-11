@@ -8,6 +8,9 @@ MIN_FREQ :: 60.0
 MAX_FREQ :: 4000.0
 CONFIDENCE_THRESHOLD :: 0.3
 
+// Selections shorter than this are treated as clicks, not selections
+MIN_SELECTION_DUR :: 0.05
+
 @(rodata)
 note_names := [12]string{"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"}
 
@@ -55,6 +58,7 @@ Isolation_Level :: struct {
 	selection_start: f32,
 	selection_end:   f32,
 	has_selection:   bool,
+	loop_enabled:    bool,
 }
 
 App_State :: struct {
