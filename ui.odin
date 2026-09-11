@@ -1012,6 +1012,7 @@ draw_library_panel :: proc(state: ^App_State, w: f32, h: f32) {
 
 handle_keyboard :: proc(state: ^App_State) {
 	if state.url_edit_mode do return
+	if state.rename_active do return
 
 	if rl.IsKeyPressed(.SPACE) {
 		toggle_playback(state)
@@ -1028,8 +1029,22 @@ handle_keyboard :: proc(state: ^App_State) {
 	if rl.IsKeyPressed(.DOWN) {
 		set_playback_speed(state, state.playback_speed - 0.05)
 	}
+	if rl.IsKeyPressed(.Z) {
+		if is_isolated(state) {
+			isolate_restore(state)
+		} else if state.has_selection {
+			zoom_to_selection(state)
+		}
+	}
+	if rl.IsKeyPressed(.F) {
+		zoom_out_full(state)
+	}
 	if rl.IsKeyPressed(.ESCAPE) {
-		state.has_selection = false
-		state.is_selecting = false
+		if is_isolated(state) {
+			isolate_restore(state)
+		} else {
+			state.has_selection = false
+			state.is_selecting = false
+		}
 	}
 }

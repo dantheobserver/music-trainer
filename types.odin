@@ -49,6 +49,14 @@ Detected_Note :: struct {
 	note_index: int,
 }
 
+Isolation_Level :: struct {
+	view_start:      f32,
+	view_duration:   f32,
+	selection_start: f32,
+	selection_end:   f32,
+	has_selection:   bool,
+}
+
 App_State :: struct {
 	// Audio
 	music:           rl.Music,
@@ -89,6 +97,7 @@ App_State :: struct {
 	view_duration:   f32,
 	waveform_rect:   rl.Rectangle,
 	cache_dirty:     bool,
+	isolation_stack: [dynamic]Isolation_Level,
 
 	// Pitch / notes
 	detected_notes:  [dynamic]Detected_Note,

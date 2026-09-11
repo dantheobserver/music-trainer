@@ -65,7 +65,11 @@ draw_waveform :: proc(state: ^App_State) {
 		compute_waveform_cache(state)
 	}
 
-	// Selection overlay
+	// Nesting breadcrumb
+	if is_isolated(state) {
+		draw_isolation_breadcrumb(state)
+	}
+
 	if state.has_selection {
 		sel_x1 := time_to_screen_x(state, state.selection_start)
 		sel_x2 := time_to_screen_x(state, state.selection_end)
@@ -157,6 +161,94 @@ draw_waveform :: proc(state: ^App_State) {
 		label := rl.TextFormat("%d:%02d", i32(minutes), i32(seconds))
 		draw_text(state, label, x - 10, rect.y + rect.height + 2, 13, rl.Color{150, 150, 160, 255})
 	}
+
+	draw_waveform_overlay(state)
+}
+
+OVERLAY_BTN_SZ :: 26
+OVERLAY_BTN_GAP :: 4
+OVERLAY_BAR_PAD :: 6
+OVERLAY_ISO_W :: 58
+
+get_overlay_bar_rect :: proc(state: ^App_State) -> rl.Rectangle {
+	rect := state.waveform_rect
+	show_isolate := state.has_selection
+	show_restore := is_isolated(state)
+	iso_w: f32 = show_isolate ? OVERLAY_ISO_W : 0
+	restore_w: f32 = show_restore ? OVERLAY_ISO_W : 0
+	btn_count: f32 = 1 // Full view always present
+	if show_isolate do btn_count += 1
+	if show_restore do btn_count += 1
+	bar_w := OVERLAY_BAR_PAD * 2 + OVERLAY_BTN_SZ + OVERLAY_BTN_GAP * (btn_count - 1) + iso_w + restore_w
+	bar_x := rect.x + 8
+	bar_y := rect.y + rect.height - OVERLAY_BTN_SZ - OVERLAY_BAR_PAD * 2 - 4
+	return {bar_x, bar_y, bar_w, OVERLAY_BTN_SZ + OVERLAY_BAR_PAD * 2}
+}
+
+draw_waveform_overlay :: proc(state: ^App_State) {
+	mouse := rl.GetMousePosition()
+	bar_rect := get_overlay_bar_rect(state)
+
+	btn_sz: f32 = OVERLAY_BTN_SZ
+	btn_gap: f32 = OVERLAY_BTN_GAP
+	bar_pad: f32 = OVERLAY_BAR_PAD
+
+	rl.DrawRectangleRounded(bar_rect, 0.15, 4, rl.Color{15, 15, 20, 180})
+
+	cx := bar_rect.x + bar_pad
+	cy := bar_rect.y + bar_pad
+
+	// -- Isolate (when selection exists) --
+	if state.has_selection {
+		iso_rect := rl.Rectangle{cx, cy, OVERLAY_ISO_W, btn_sz}
+		iso_hover := rl.CheckCollisionPointRec(mouse, iso_rect)
+		if iso_hover {
+			rl.DrawRectangleRounded(iso_rect, 0.2, 4, rl.Color{60, 60, 75, 140})
+		}
+		lw := measure_text(state, "Isolate", 13)
+		draw_text(state, "Isolate", cx + (OVERLAY_ISO_W - lw) / 2, cy + 6, 13, {180, 180, 220, 220})
+		if iso_hover && rl.IsMouseButtonPressed(.LEFT) {
+			zoom_to_selection(state)
+		}
+		cx += OVERLAY_ISO_W + btn_gap
+	}
+
+	// -- Restore (when isolated) --
+	if is_isolated(state) {
+		restore_rect := rl.Rectangle{cx, cy, OVERLAY_ISO_W, btn_sz}
+		restore_hover := rl.CheckCollisionPointRec(mouse, restore_rect)
+		if restore_hover {
+			rl.DrawRectangleRounded(restore_rect, 0.2, 4, rl.Color{60, 60, 75, 140})
+		}
+		lw := measure_text(state, "Restore", 13)
+		draw_text(state, "Restore", cx + (OVERLAY_ISO_W - lw) / 2, cy + 6, 13, {100, 180, 255, 220})
+		if restore_hover && rl.IsMouseButtonPressed(.LEFT) {
+			isolate_restore(state)
+		}
+		cx += OVERLAY_ISO_W + btn_gap
+	}
+
+	// -- Full view --
+	full_rect := rl.Rectangle{cx, cy, btn_sz, btn_sz}
+	full_hover := rl.CheckCollisionPointRec(mouse, full_rect)
+	if full_hover {
+		rl.DrawRectangleRounded(full_rect, 0.2, 4, rl.Color{60, 60, 75, 140})
+	}
+	fc := full_hover ? rl.Color{200, 200, 240, 220} : rl.Color{180, 180, 220, 220}
+	fx := cx + 6
+	fy := cy + 6
+	fs: f32 = btn_sz - 12
+	rl.DrawLineEx({fx, fy}, {fx + 4, fy}, 2, fc)
+	rl.DrawLineEx({fx, fy}, {fx, fy + 4}, 2, fc)
+	rl.DrawLineEx({fx + fs, fy}, {fx + fs - 4, fy}, 2, fc)
+	rl.DrawLineEx({fx + fs, fy}, {fx + fs, fy + 4}, 2, fc)
+	rl.DrawLineEx({fx, fy + fs}, {fx + 4, fy + fs}, 2, fc)
+	rl.DrawLineEx({fx, fy + fs}, {fx, fy + fs - 4}, 2, fc)
+	rl.DrawLineEx({fx + fs, fy + fs}, {fx + fs - 4, fy + fs}, 2, fc)
+	rl.DrawLineEx({fx + fs, fy + fs}, {fx + fs, fy + fs - 4}, 2, fc)
+	if full_hover && rl.IsMouseButtonPressed(.LEFT) {
+		zoom_out_full(state)
+	}
 }
 
 update_waveform_input :: proc(state: ^App_State) {
@@ -166,6 +258,12 @@ update_waveform_input :: proc(state: ^App_State) {
 	mouse := rl.GetMousePosition()
 	rect := state.waveform_rect
 	in_rect := rl.CheckCollisionPointRec(mouse, rect)
+
+	// Check if mouse is over the zoom overlay bar — skip waveform clicks there
+	overlay_bar := get_overlay_bar_rect(state)
+	if rl.CheckCollisionPointRec(mouse, overlay_bar) && rl.IsMouseButtonPressed(.LEFT) {
+		state.skip_waveform_click = true
+	}
 
 	// Zoom with mouse wheel
 	wheel := rl.GetMouseWheelMove()
@@ -192,7 +290,7 @@ update_waveform_input :: proc(state: ^App_State) {
 	// Left-click: seek on click, select on drag (min 8px movement)
 	DRAG_THRESHOLD :: 8
 
-	if in_rect && rl.IsMouseButtonPressed(.LEFT) {
+	if in_rect && rl.IsMouseButtonPressed(.LEFT) && !state.skip_waveform_click {
 		state.click_start_x = mouse.x
 		click_time := screen_x_to_time(state, mouse.x)
 
@@ -290,12 +388,118 @@ time_to_screen_x :: proc(state: ^App_State, t: f32) -> f32 {
 }
 
 clamp_view :: proc(state: ^App_State) {
-	if state.view_start < 0 do state.view_start = 0
-	if state.view_start + state.view_duration > state.duration {
-		state.view_start = max(state.duration - state.view_duration, 0)
+	if is_isolated(state) {
+		// Constrain view to current isolation level's bounds
+		top := state.isolation_stack[len(state.isolation_stack) - 1]
+		iso_start := top.selection_start
+		iso_end := top.selection_end
+		iso_dur := iso_end - iso_start
+		if state.view_duration > iso_dur {
+			state.view_duration = iso_dur
+		}
+		if state.view_start < iso_start {
+			state.view_start = iso_start
+		}
+		if state.view_start + state.view_duration > iso_end {
+			state.view_start = iso_end - state.view_duration
+		}
+	} else {
+		if state.view_start < 0 do state.view_start = 0
+		if state.view_start + state.view_duration > state.duration {
+			state.view_start = max(state.duration - state.view_duration, 0)
+		}
+		if state.view_duration > state.duration {
+			state.view_duration = state.duration
+			state.view_start = 0
+		}
 	}
-	if state.view_duration > state.duration {
-		state.view_duration = state.duration
+}
+
+format_time_short :: proc(t: f32) -> cstring {
+	minutes := i32(t) / 60
+	seconds := i32(t) % 60
+	return rl.TextFormat("%d:%02d", minutes, seconds)
+}
+
+draw_isolation_breadcrumb :: proc(state: ^App_State) {
+	rect := state.waveform_rect
+	x := rect.x + 8
+	y := rect.y + 6
+	n := len(state.isolation_stack)
+
+	for i in 0 ..< n {
+		level := state.isolation_stack[i]
+		seg := rl.TextFormat("%s-%s", format_time_short(level.selection_start), format_time_short(level.selection_end))
+		is_last := i == n - 1
+		color: rl.Color = is_last ? {200, 220, 255, 255} : {140, 180, 220, 200}
+		draw_text(state, seg, x, y, 13, color)
+		x += measure_text(state, seg, 13)
+
+		if !is_last {
+			arrow: cstring = " > "
+			draw_text(state, arrow, x, y, 13, rl.Color{100, 100, 130, 180})
+			x += measure_text(state, arrow, 13)
+		}
+	}
+}
+
+is_isolated :: proc(state: ^App_State) -> bool {
+	return len(state.isolation_stack) > 0
+}
+
+zoom_to_selection :: proc(state: ^App_State) {
+	if !state.has_selection do return
+
+	// Push current state onto stack
+	append(&state.isolation_stack, Isolation_Level{
+		view_start      = state.view_start,
+		view_duration   = state.view_duration,
+		selection_start = state.selection_start,
+		selection_end   = state.selection_end,
+		has_selection   = state.has_selection,
+	})
+
+	state.view_start = state.selection_start
+	state.view_duration = state.selection_end - state.selection_start
+	state.has_selection = false
+
+	clamp_view(state)
+	state.cache_dirty = true
+}
+
+// Pop one isolation level
+isolate_restore :: proc(state: ^App_State) {
+	n := len(state.isolation_stack)
+	if n == 0 do return
+
+	prev := state.isolation_stack[n - 1]
+	pop(&state.isolation_stack)
+
+	state.view_start = prev.view_start
+	state.view_duration = prev.view_duration
+	state.selection_start = prev.selection_start
+	state.selection_end = prev.selection_end
+	state.has_selection = prev.has_selection
+
+	clamp_view(state)
+	state.cache_dirty = true
+}
+
+// Pop all isolation levels — full view
+zoom_out_full :: proc(state: ^App_State) {
+	if len(state.isolation_stack) > 0 {
+		first := state.isolation_stack[0]
+		clear(&state.isolation_stack)
+
 		state.view_start = 0
+		state.view_duration = state.duration
+		state.selection_start = first.selection_start
+		state.selection_end = first.selection_end
+		state.has_selection = first.has_selection
+	} else {
+		state.view_start = 0
+		state.view_duration = state.duration
 	}
+	clamp_view(state)
+	state.cache_dirty = true
 }

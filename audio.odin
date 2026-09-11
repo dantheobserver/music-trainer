@@ -80,25 +80,34 @@ unload_audio :: proc(state: ^App_State) {
 update_audio :: proc(state: ^App_State) {
 	if !state.audio_loaded || !state.is_playing do return
 
+	isolated := is_isolated(state)
+	should_loop := (state.loop_enabled && state.has_selection) || isolated
+
+	loop_start, loop_end: f32
+	if isolated {
+		top := state.isolation_stack[len(state.isolation_stack) - 1]
+		loop_start = top.selection_start
+		loop_end = top.selection_end
+	} else {
+		loop_start = state.selection_start
+		loop_end = state.selection_end
+	}
+
 	if state.pitch_correct && state.has_stretched {
 		rl.UpdateMusicStream(state.stretched_music)
 		stretched_time := rl.GetMusicTimePlayed(state.stretched_music)
 		state.current_time = to_original_time(stretched_time, state.stretched_speed)
 
-		if state.loop_enabled && state.has_selection {
-			if state.current_time >= state.selection_end {
-				seek_pos := to_stretched_time(state.selection_start, state.stretched_speed)
-				rl.SeekMusicStream(state.stretched_music, seek_pos)
-			}
+		if should_loop && state.current_time >= loop_end {
+			seek_pos := to_stretched_time(loop_start, state.stretched_speed)
+			rl.SeekMusicStream(state.stretched_music, seek_pos)
 		}
 	} else {
 		rl.UpdateMusicStream(state.music)
 		state.current_time = rl.GetMusicTimePlayed(state.music)
 
-		if state.loop_enabled && state.has_selection {
-			if state.current_time >= state.selection_end {
-				rl.SeekMusicStream(state.music, state.selection_start)
-			}
+		if should_loop && state.current_time >= loop_end {
+			rl.SeekMusicStream(state.music, loop_start)
 		}
 	}
 }
@@ -202,7 +211,13 @@ set_playback_speed :: proc(state: ^App_State, speed: f32) {
 
 seek_to_time :: proc(state: ^App_State, time: f32) {
 	if !state.audio_loaded do return
-	target := math.clamp(time, 0, state.duration)
+	target: f32
+	if is_isolated(state) {
+		top := state.isolation_stack[len(state.isolation_stack) - 1]
+		target = math.clamp(time, top.selection_start, top.selection_end)
+	} else {
+		target = math.clamp(time, 0, state.duration)
+	}
 	state.current_time = target
 
 	if state.pitch_correct && state.has_stretched {

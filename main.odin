@@ -72,6 +72,7 @@ main :: proc() {
 	}
 	delete(state.waveform_cache)
 	delete(state.detected_notes)
+	delete(state.isolation_stack)
 	for &f in state.library_files {
 		delete(f)
 	}
