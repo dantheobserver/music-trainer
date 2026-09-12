@@ -182,6 +182,10 @@ draw_title_bar :: proc(state: ^App_State, w: f32) {
 	rl.DrawRectangleRec({14, 14, 4, 22}, ACCENT)
 	draw_text_bold(state, "Music Trainer", 26, 11, 28, TEXT_PRI)
 
+	// Version tag
+	version_x: f32 = 26 + measure_text_bold(state, "Music Trainer", 28) + 10
+	draw_text(state, APP_VERSION, version_x, 20, 14, TEXT_DIM)
+
 	// Library button (rounded, accent on hover)
 	lib_btn_w: f32 = 86
 	lib_btn_h: f32 = 32

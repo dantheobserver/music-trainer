@@ -1,20 +1,37 @@
 # Music Trainer
 
-A desktop audio learning tool for practicing songs by ear. Load audio files, visualize the waveform with real-time pitch detection, loop sections, adjust speed, and isolate notes by filtering frequency and confidence.
+**v0.1.0-beta**
+
+A desktop audio learning tool for practicing songs by ear. Load audio files, visualize the waveform with real-time pitch detection, loop sections, slow down with or without pitch correction, and isolate sections for focused practice.
 
 Built with [Odin](https://odin-lang.org/) and [Raylib](https://www.raylib.com/).
 
-![Music Trainer](screenshot.png)
+![Main view — selection, looping, pitch detection](screenshot.png)
+
+## Screenshots
+
+**Full view** — click and drag to select a region; it auto-loops on release. The waveform is color-coded by detected pitch, with a note timeline underneath.
+
+**Isolated section** — zoom into any selection to practice it in detail. Isolations nest: each level gets its own view, loop region, and breadcrumb trail, and restoring unwinds one level at a time.
+
+![Isolated section with breadcrumb and nested selection](screenshot_isolated.png)
+
+**Music library** — browse, preview, rename, and delete files in your library.
+
+![Library panel](screenshot_library.png)
 
 ## Features
 
 - **Waveform visualization** — color-coded by detected pitch (each note gets a distinct color)
 - **Real-time note detection** — FFT-based pitch analysis with parabolic interpolation
 - **Section looping** — click and drag to select a region, auto-loops on release
-- **Speed control** — 0.25x to 2.0x playback without pitch correction
+- **Section isolation** — zoom into a selection with the Isolate button; isolate again inside for nested zoom, with a breadcrumb trail (`0:00-0:02 > 0:01-0:02`) showing the levels
+- **Pitch-corrected speed** — slow down to 0.25x (or up to 2.0x) without changing pitch, via time-stretching; or disable Pitch Correct for classic resampling
+- **Speed control** — 0.25x to 2.0x playback
 - **Detection filters** — adjust sensitivity, min/max frequency to isolate melody from accompaniment
 - **Click to seek** — click anywhere on the waveform to jump to that position
 - **Zoom and scroll** — Ctrl+wheel to zoom, wheel to scroll horizontally
+- **Track title** — shown in the title bar and window title
 - **URL download** — paste a URL and download audio via yt-dlp
 - **System audio recording** — record audio playing from your system (PulseAudio/PipeWire)
 - **File library** — browse, preview, rename, and delete files in your library
@@ -59,18 +76,30 @@ Or run directly with an optional file argument:
 |---|---|
 | Play / Pause | Space or Play button |
 | Stop | Stop button |
-| Seek | Click on waveform |
+| Seek | Click on waveform (left or right button) |
 | Select section | Click and drag on waveform |
+| Isolate selection | `Z` or Isolate button |
+| Restore last isolation | `Z` or Escape or Restore button |
+| Full view | `F` or full-view button |
 | Zoom | Ctrl + mouse wheel |
 | Scroll | Mouse wheel |
 | Speed up / down | Up / Down arrow keys |
 | Seek ±5s | Left / Right arrow keys |
-| Clear selection | Escape |
 | Record system audio | Record button (pink circle) |
 | Load from library | Library button → click file |
 | Preview in library | Play icon next to file |
 | Rename file | Pencil icon next to file |
 | Delete file | Trash icon next to file |
+
+## Section Isolation
+
+Select a region and hit **Isolate** (or `Z`) to zoom into it — the region loops on its own and the waveform is redrawn for that slice. Inside an isolated view you can:
+
+- Make a new selection and it loops by itself
+- Isolate again to nest deeper (each level is its own state)
+- Watch the breadcrumb trail at the top-left of the waveform to see where you are
+
+**Restore** (`Z` or Escape) unwinds one level, returning that level's view, selection, and loop settings. **Full view** (`F`) unwinds everything at once.
 
 ## Music Library
 
@@ -83,7 +112,9 @@ Audio files are stored in `~/Music/music_trainer/`. This directory is created au
 | `Space` | Toggle play/pause |
 | `Left` / `Right` | Seek ±5 seconds |
 | `Up` / `Down` | Adjust playback speed |
-| `Escape` | Clear selection |
+| `Z` | Isolate selection / restore last isolation |
+| `F` | Full view (unwind all isolations) |
+| `Escape` | Restore isolation, or clear selection |
 
 ## License
 

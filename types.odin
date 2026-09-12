@@ -11,6 +11,8 @@ CONFIDENCE_THRESHOLD :: 0.3
 // Selections shorter than this are treated as clicks, not selections
 MIN_SELECTION_DUR :: 0.05
 
+APP_VERSION :: "v0.1.0-beta"
+
 @(rodata)
 note_names := [12]string{"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"}
 

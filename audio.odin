@@ -44,7 +44,7 @@ load_audio_file :: proc(state: ^App_State, path: cstring) -> bool {
 	state.audio_loaded = true
 	state.file_name = string(path)
 	// Show the track title in the window title too
-	rl.SetWindowTitle(rl.TextFormat("Music Trainer - %s", strings.clone_to_cstring(track_title(state), context.temp_allocator)))
+	rl.SetWindowTitle(rl.TextFormat("Music Trainer %s - %s", APP_VERSION, strings.clone_to_cstring(track_title(state), context.temp_allocator)))
 
 	state.view_start = 0
 	state.view_duration = state.duration
@@ -69,7 +69,7 @@ unload_audio :: proc(state: ^App_State) {
 	rl.UnloadWaveSamples(state.samples)
 	rl.UnloadWave(state.wave)
 	rl.UnloadMusicStream(state.music)
-	rl.SetWindowTitle("Music Trainer")
+	rl.SetWindowTitle(rl.TextFormat("Music Trainer %s", APP_VERSION))
 
 	clear(&state.waveform_cache)
 	clear(&state.detected_notes)
