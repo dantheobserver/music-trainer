@@ -121,7 +121,7 @@ draw_ui :: proc(state: ^App_State) {
 	draw_status_bar(state, w, h)
 	draw_note_display(state)
 
-	if !state.audio_loaded {
+	if !state.audio_loaded && !state.is_recording {
 		rect := state.waveform_rect
 		draw_gradient_vertical(rect, BG_PANEL, rl.Color{18, 20, 28, 255})
 		rl.DrawRectangleRoundedLinesEx(rect, 0.04, 4, 1, BORDER)
@@ -181,7 +181,17 @@ draw_title_bar :: proc(state: ^App_State, w: f32) {
 		draw_text(state, display_name, lib_btn_x - nw - 16, 16, 18, TEXT_SEC)
 	}
 
-	if state.audio_loaded {
+	if state.is_recording {
+		// Live elapsed time while capturing
+		secs := recording_duration()
+		time_str := rl.TextFormat("REC %d:%02d", i32(secs) / 60, i32(secs) % 60)
+		tw := measure_text(state, time_str, 20)
+		tx := w / 2 - tw / 2
+		pill := rl.Rectangle{tx - 10, 14, tw + 20, 24}
+		rl.DrawRectangleRounded(pill, 0.4, 8, rl.Color{40, 24, 32, 200})
+		rl.DrawRectangleRoundedLinesEx(pill, 0.4, 8, 1, rl.Color{RECORD_COLOR.r, RECORD_COLOR.g, RECORD_COLOR.b, 160})
+		draw_text(state, time_str, tx, 17, 20, rl.Color{255, 190, 205, 255})
+	} else if state.audio_loaded {
 		minutes := int(state.current_time) / 60
 		seconds := int(state.current_time) % 60
 		total_min := int(state.duration) / 60

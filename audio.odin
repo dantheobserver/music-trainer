@@ -348,7 +348,7 @@ download_from_url :: proc(state: ^App_State, url: string) {
 	if !load_audio_file(state, cpath) {
 		state.download_status = "Failed to load downloaded audio"
 	} else {
-		state.download_status = rl.TextFormat("Saved to %s", cpath)
+		set_statusf(state, "Saved to %s", cpath)
 		scan_library(state)
 	}
 }

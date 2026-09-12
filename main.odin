@@ -35,6 +35,7 @@ main :: proc() {
 			rl.UnloadDroppedFiles(files)
 		}
 
+		poll_recording(&state)
 		update_audio(&state)
 		if state.preview_playing {
 			rl.UpdateMusicStream(state.preview_music)
@@ -73,6 +74,7 @@ main :: proc() {
 	delete(state.waveform_cache)
 	delete(state.detected_notes)
 	delete(state.isolation_stack)
+	delete(record_samples)
 	for &f in state.library_files {
 		delete(f)
 	}

@@ -47,6 +47,10 @@ compute_waveform_cache :: proc(state: ^App_State) {
 }
 
 draw_waveform :: proc(state: ^App_State) {
+	if state.is_recording {
+		draw_recording_strip(state)
+		return
+	}
 	if !state.audio_loaded do return
 
 	rect := state.waveform_rect
@@ -184,9 +188,9 @@ draw_waveform :: proc(state: ^App_State) {
 		1, rl.Color{ACCENT_BRIGHT.r, ACCENT_BRIGHT.g, ACCENT_BRIGHT.b, 120},
 	)
 
-	// Playback cursor — a stylized neon scrubber: soft vertical glow tube, a
-	// bright 1px core, chevron markers capping the top/bottom, and a gently
-	// pulsing dot where it crosses the center line.
+// Playback cursor — a stylized neon scrubber: soft vertical glow tube, a
+// bright 1px core, chevron markers capping the top/bottom, and a gently
+// pulsing dot where it crosses the center line.
 	cursor_x := time_to_screen_x(state, state.current_time)
 	if cursor_x >= rect.x && cursor_x <= rect.x + rect.width {
 		// Neon tube glow + crisp core
@@ -237,6 +241,142 @@ draw_waveform :: proc(state: ^App_State) {
 	}
 
 	draw_waveform_overlay(state)
+}
+
+RECORD_STRIP_PX :: 2.0 // horizontal size of one chunk entry
+
+// Live capture display — a scrolling level strip, not a waveform. Each entry
+// is the min/max extent of one ~21ms chunk (parec delivers at ~20ms latency so
+// entries land roughly one per frame), and the write head shows the chunk
+// currently filling, refreshed every frame. Time maps to pixels at a constant
+// rate, so the motion never rescales and stays smooth; the cost is a few
+// hundred simple primitives regardless of recording length. The detailed
+// note-colored waveform only renders after stop, from the loaded file.
+draw_recording_strip :: proc(state: ^App_State) {
+	rect := state.waveform_rect
+	center_y := rect.y + rect.height * 0.5
+
+	// Flat background — one fill instead of the per-pixel-row gradient
+	rl.DrawRectangleRec(rect, rl.Color{18, 20, 28, 255})
+	rl.DrawRectangleRoundedLinesEx(rect, 0.04, 4, 1, BORDER)
+
+	unit_per_sec := f32(record_sample_rate) / f32(RECORD_CHUNK_FRAMES)
+	now_units := f32(record_strip_count) + f32(record_chunk_fill) / f32(RECORD_CHUNK_FRAMES)
+	now_secs := now_units / unit_per_sec
+	visible_units := rect.width / RECORD_STRIP_PX
+	visible_secs := visible_units / unit_per_sec
+
+	// Faint 5-second ticks scrolling with the strip
+	first_tick := max(1, int((now_secs - visible_secs) / 5.0) + 1)
+	last_tick := int(now_secs / 5.0)
+	if last_tick >= first_tick {
+		for m in first_tick ..= last_tick {
+			x := strip_x(f32(m) * 5.0 * unit_per_sec, now_units, visible_units, rect)
+			rl.DrawLineV({x, rect.y + 1}, {x, rect.y + rect.height - 1}, rl.Color{60, 80, 84, 45})
+		}
+	}
+
+	// Silence baseline — drawn as a thin rect, not DrawLineEx: the app's
+	// frame context (raygui/batch state) silently drops DrawLineEx primitives
+	// here, while rects, lines and text render fine.
+	rl.DrawRectangleRec(
+		{rect.x + 1, center_y - 0.5, rect.width - 2, 1},
+		rl.Color{ACCENT_BRIGHT.r, ACCENT_BRIGHT.g, ACCENT_BRIGHT.b, 60},
+	)
+
+	// Completed chunk entries, oldest first
+	// Completed chunk entries, newest first so the loop can stop as soon as an
+	// entry has scrolled off the left edge (the oldest entry starts ~1px outside)
+	if record_strip_count > 0 {
+		first := max(record_strip_count - int(visible_units) - 2, 0)
+		for j := record_strip_count - 1; j >= first; j -= 1 {
+			x := strip_x(f32(j) + 0.5, now_units, visible_units, rect)
+			if x < rect.x - RECORD_STRIP_PX do break
+			if x > rect.x + rect.width do continue
+			draw_strip_entry(x, center_y, record_strip[j %% RECORD_LEVEL_CAP], rect.height)
+		}
+	}
+
+	// Write head — the chunk currently filling, live every frame. It slides
+	// toward the newest entry's slot and becomes it seamlessly on completion.
+	if record_chunk_fill > 0 {
+		head_unit := f32(record_strip_count) + f32(record_chunk_fill) * 0.5 / f32(RECORD_CHUNK_FRAMES)
+		x := strip_x(head_unit, now_units, visible_units, rect)
+		draw_strip_entry(x, center_y, record_chunk_partial, rect.height)
+	}
+
+	// Right-edge glow breathing with the live input level
+	peak := max(abs(record_chunk_partial.min_val), abs(record_chunk_partial.max_val))
+	draw_vglow(rect.x + rect.width - 1, rect.y + 1, rect.y + rect.height - 1, 4, RECORD_COLOR,
+		u8(40 + 120 * math.clamp(peak * 1.3, 0.0, 1.0)))
+
+	draw_recording_badge(state, rect)
+}
+
+// Map a chunk-time (in units of chunks since recording start) to screen x.
+// While the recording is shorter than the window the strip anchors at the
+// left edge; once it overflows, the write head locks to the right edge and
+// everything scrolls left at a constant 2px per chunk.
+strip_x :: proc(unit, now_units, visible_units: f32, rect: rl.Rectangle) -> f32 {
+	if now_units > visible_units {
+		return rect.x + rect.width - (now_units - unit) * RECORD_STRIP_PX
+	}
+	return rect.x + unit * RECORD_STRIP_PX
+}
+
+// One 2px column of the strip: the min/max extent of a chunk, alpha modulated
+// by its peak so loud passages read brighter and silence stays a faint dot.
+draw_strip_entry :: proc(x, center_y: f32, entry: Waveform_Column, panel_h: f32) {
+	half_h := panel_h * 0.42
+	top := center_y - entry.max_val * half_h
+	bot := center_y - entry.min_val * half_h
+	if bot - top < 2.0 {
+		mid := (top + bot) * 0.5
+		top, bot = mid - 1.0, mid + 1.0
+	}
+	peak := max(abs(entry.min_val), abs(entry.max_val))
+	alpha := u8(90 + 160 * math.clamp(peak * 1.3, 0.0, 1.0))
+	rl.DrawRectangleRec(
+		{x - RECORD_STRIP_PX * 0.5, top, RECORD_STRIP_PX, bot - top},
+		rl.Color{ACCENT_BRIGHT.r, ACCENT_BRIGHT.g, ACCENT_BRIGHT.b, alpha},
+	)
+}
+
+// Pulsing REC badge pinned to the top-left of the waveform panel while a
+// live capture is running.
+draw_recording_badge :: proc(state: ^App_State, rect: rl.Rectangle) {
+	pulse: f32 = 0.5 + 0.5 * f32(math.sin(rl.GetTime() * 5.0))
+	dot_r: f32 = 5.0 + pulse * 1.5
+	dot_a := u8(160 + 90 * pulse)
+
+	pad: f32 = 10
+	label: cstring = "REC"
+	label_size: f32 = 16
+	label_w := measure_text(state, label, label_size)
+
+	secs := recording_duration()
+	time_str := rl.TextFormat("%d:%02d", i32(secs) / 60, i32(secs) % 60)
+	time_w := measure_text(state, time_str, label_size)
+
+	// Linear layout: dot, REC label, elapsed time
+	dot_x := rect.x + pad + 6 + dot_r
+	dot_y := rect.y + pad + 8
+	label_x := dot_x + dot_r + 6
+	time_x := label_x + label_w + 8
+	end_x := time_x + time_w
+
+	// Soft pill behind the badge so it stays readable over the waveform
+	pill := rl.Rectangle{rect.x + pad - 2, rect.y + pad - 2, end_x - rect.x - pad + 12, 24}
+	rl.DrawRectangleRounded(pill, 0.4, 8, rl.Color{30, 16, 22, 190})
+	rl.DrawRectangleRoundedLinesEx(pill, 0.4, 8, 1, rl.Color{RECORD_COLOR.r, RECORD_COLOR.g, RECORD_COLOR.b, 140})
+
+	rl.DrawCircle(i32(dot_x), i32(dot_y), dot_r, rl.Color{RECORD_COLOR.r, RECORD_COLOR.g, RECORD_COLOR.b, dot_a})
+	rl.DrawCircle(i32(dot_x), i32(dot_y), 2.5, rl.Color{255, 230, 238, 255})
+	draw_text(state, label, label_x, rect.y + pad + 1, label_size, rl.Color{255, 190, 205, 255})
+	draw_text(state, time_str, time_x, rect.y + pad + 1, label_size, TEXT_SEC)
+
+	// "Now" edge — a soft glow marking where live audio lands
+	draw_vglow(rect.x + rect.width - 1, rect.y + 1, rect.y + rect.height - 1, 4, RECORD_COLOR, 70)
 }
 
 OVERLAY_BTN_SZ :: 26

@@ -152,6 +152,7 @@ App_State :: struct {
 	url_edit_mode:   bool,
 	is_downloading:  bool,
 	download_status: cstring,
+	status_owned:    cstring, // heap-backed copy of download_status, freed on replace
 }
 
 init_state :: proc() -> App_State {
