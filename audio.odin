@@ -43,6 +43,8 @@ load_audio_file :: proc(state: ^App_State, path: cstring) -> bool {
 	state.duration = rl.GetMusicTimeLength(music)
 	state.audio_loaded = true
 	state.file_name = string(path)
+	// Show the track title in the window title too
+	rl.SetWindowTitle(rl.TextFormat("Music Trainer - %s", strings.clone_to_cstring(track_title(state), context.temp_allocator)))
 
 	state.view_start = 0
 	state.view_duration = state.duration
@@ -67,6 +69,7 @@ unload_audio :: proc(state: ^App_State) {
 	rl.UnloadWaveSamples(state.samples)
 	rl.UnloadWave(state.wave)
 	rl.UnloadMusicStream(state.music)
+	rl.SetWindowTitle("Music Trainer")
 
 	clear(&state.waveform_cache)
 	clear(&state.detected_notes)
@@ -211,13 +214,15 @@ stop_playback :: proc(state: ^App_State) {
 }
 
 set_playback_speed :: proc(state: ^App_State, speed: f32) {
-	old_speed := state.playback_speed
 	state.playback_speed = math.clamp(speed, 0.25, 2.0)
 
 	if !state.is_playing do return
 
 	if state.pitch_correct && state.playback_speed != 1.0 {
-		if state.playback_speed != old_speed {
+		// Rebuild whenever the stretched stream doesn't match the target speed.
+		// The speed slider writes the new value into the state directly, so
+		// comparing against the previous speed would miss the change.
+		if !state.has_stretched || state.stretched_speed != state.playback_speed {
 			current := state.current_time
 			prepare_stretched_audio(state)
 			if state.has_stretched {
@@ -228,6 +233,14 @@ set_playback_speed :: proc(state: ^App_State, speed: f32) {
 				rl.SeekMusicStream(state.stretched_music, seek_pos)
 			}
 		}
+	} else if state.has_stretched {
+		// Switching back to normal playback (e.g. speed returned to 1.0 while
+		// Pitch Correct is on) — hand playback over to the normal stream at the
+		// current position, otherwise the stretched stream would keep playing.
+		current := state.current_time
+		cleanup_stretched(state)
+		start_normal_playback(state)
+		rl.SeekMusicStream(state.music, current)
 	} else {
 		rl.SetMusicPitch(state.music, state.playback_speed)
 	}

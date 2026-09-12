@@ -102,6 +102,35 @@ measure_text_bold :: proc(state: ^App_State, text: cstring, size: f32) -> f32 {
 	return f32(rl.MeasureText(text, i32(size)))
 }
 
+// Track title for display: the loaded file's base name without its extension.
+track_title :: proc(state: ^App_State) -> string {
+	_, base_name := filepath.split(state.file_name)
+	dot := strings.last_index(base_name, ".")
+	if dot > 0 {
+		return base_name[:dot]
+	}
+	return base_name
+}
+
+// Truncate text with an ellipsis so it fits within max_w pixels.
+// Returns the input unchanged when it already fits.
+truncate_to_width :: proc(state: ^App_State, text: string, max_w: f32, size: f32) -> string {
+	if measure_text(state, strings.clone_to_cstring(text, context.temp_allocator), size) <= max_w do return text
+
+	target := max_w - measure_text(state, "...", size)
+	if target <= 0 do return ""
+
+	cut := len(text)
+	for cut > 0 && measure_text(state, strings.clone_to_cstring(text[:cut], context.temp_allocator), size) > target {
+		cut -= 1
+		// Step back over UTF-8 continuation bytes so a rune is never split
+		for cut > 0 && text[cut] & 0xC0 == 0x80 {
+			cut -= 1
+		}
+	}
+	return strings.concatenate({text[:cut], "..."}, context.temp_allocator)
+}
+
 // ---
 
 draw_ui :: proc(state: ^App_State) {
@@ -174,12 +203,9 @@ draw_title_bar :: proc(state: ^App_State, w: f32) {
 		}
 	}
 
-	if state.audio_loaded {
-		_, base_name := filepath.split(state.file_name)
-		display_name := strings.clone_to_cstring(base_name, context.temp_allocator)
-		nw := measure_text(state, display_name, 18)
-		draw_text(state, display_name, lib_btn_x - nw - 16, 16, 18, TEXT_SEC)
-	}
+	// Center pill — REC timer while recording, time readout otherwise.
+	// pill_right feeds the track-title clamp below.
+	pill_right: f32 = w / 2
 
 	if state.is_recording {
 		// Live elapsed time while capturing
@@ -191,6 +217,7 @@ draw_title_bar :: proc(state: ^App_State, w: f32) {
 		rl.DrawRectangleRounded(pill, 0.4, 8, rl.Color{40, 24, 32, 200})
 		rl.DrawRectangleRoundedLinesEx(pill, 0.4, 8, 1, rl.Color{RECORD_COLOR.r, RECORD_COLOR.g, RECORD_COLOR.b, 160})
 		draw_text(state, time_str, tx, 17, 20, rl.Color{255, 190, 205, 255})
+		pill_right = tx + tw + 10
 	} else if state.audio_loaded {
 		minutes := int(state.current_time) / 60
 		seconds := int(state.current_time) % 60
@@ -204,6 +231,19 @@ draw_title_bar :: proc(state: ^App_State, w: f32) {
 		rl.DrawRectangleRounded(pill, 0.4, 8, rl.Color{30, 34, 48, 200})
 		rl.DrawRectangleRoundedLinesEx(pill, 0.4, 8, 1, rl.Color{50, 56, 74, 200})
 		draw_text(state, time_str, tx, 17, 20, TEXT_PRI)
+		pill_right = tx + tw + 10
+	}
+
+	// Track title — sits between the center pill and the Library button,
+	// brightening while the track is playing.
+	if state.audio_loaded {
+		max_w := lib_btn_x - 16 - (pill_right + 14)
+		display := truncate_to_width(state, track_title(state), max_w, 18)
+		if len(display) > 0 {
+			display_c := strings.clone_to_cstring(display, context.temp_allocator)
+			nw := measure_text(state, display_c, 18)
+			draw_text(state, display_c, lib_btn_x - nw - 16, 16, 18, state.is_playing ? TEXT_PRI : TEXT_SEC)
+		}
 	}
 }
 
@@ -385,9 +425,13 @@ draw_controls :: proc(state: ^App_State, w: f32, h: f32) {
 			start_stretched_playback(state)
 		} else {
 			if state.has_stretched {
-				rl.StopMusicStream(state.stretched_music)
+				current := state.current_time
+				cleanup_stretched(state)
+				start_normal_playback(state)
+				rl.SeekMusicStream(state.music, current)
+			} else {
+				start_normal_playback(state)
 			}
-			start_normal_playback(state)
 		}
 	}
 
