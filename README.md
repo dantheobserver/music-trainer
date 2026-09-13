@@ -118,4 +118,8 @@ Audio files are stored in `~/Music/music_trainer/`. This directory is created au
 
 ## License
 
-MIT
+MIT — see [LICENSE](LICENSE).
+
+---
+
+*Made with Vibes. LLM Harness was used to manifest my ideas into this app.*
