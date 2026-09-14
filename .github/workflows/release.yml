@@ -3,6 +3,12 @@ name: Release
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to attach the AppImage to"
+        required: true
+        default: "v0.1.0-beta"
 
 permissions:
   contents: write
@@ -43,5 +49,6 @@ jobs:
       - name: Attach AppImage to release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ inputs.tag || github.ref_name }}
           files: build/Music-Trainer-x86_64.AppImage
           fail_on_unmatched_files: true
