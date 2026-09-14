@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Music Trainer
+GenericName=Ear Training Tool
+Comment=Practice songs by ear with pitch visualization, looping, and section isolation
+Exec=music_trainer
+Icon=music_trainer
+Terminal=false
+Categories=AudioVideo;Audio;Music;
+StartupWMClass=music_trainer

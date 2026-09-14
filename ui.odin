@@ -20,14 +20,29 @@ FONT_SIZE      :: 22
 FONT_SPACING   :: 1.0
 
 load_fonts :: proc(state: ^App_State) {
-	state.font = rl.LoadFontEx(FONT_PATH, FONT_SIZE, nil, 0)
-	state.font_bold = rl.LoadFontEx(FONT_BOLD_PATH, 48, nil, 0)
+	// Prefer system fonts; fall back to fonts bundled next to the binary
+	// (used when running from an AppImage or a relocatable install).
+	state.font = rl.LoadFontEx(font_candidate(FONT_PATH, "LiberationSans-Regular.ttf"), FONT_SIZE, nil, 0)
+	state.font_bold = rl.LoadFontEx(font_candidate(FONT_BOLD_PATH, "LiberationSans-Bold.ttf"), 48, nil, 0)
 
 	if state.font.glyphCount > 0 && state.font_bold.glyphCount > 0 {
 		rl.SetTextureFilter(state.font.texture, .BILINEAR)
 		rl.SetTextureFilter(state.font_bold.texture, .BILINEAR)
 		state.fonts_loaded = true
 	}
+}
+
+font_candidate :: proc(system_path: cstring, bundled_name: string) -> cstring {
+	if rl.FileExists(system_path) do return system_path
+
+	dir := string(rl.GetApplicationDirectory())
+	if len(dir) > 0 && dir[len(dir) - 1] != '/' {
+		dir = strings.concatenate({dir, "/"}, context.temp_allocator)
+	}
+	return strings.clone_to_cstring(
+		strings.concatenate({dir, "fonts/", bundled_name}, context.temp_allocator),
+		context.temp_allocator,
+	)
 }
 
 color_to_hex :: proc(col: rl.Color) -> c.int {

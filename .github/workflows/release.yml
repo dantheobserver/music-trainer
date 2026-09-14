@@ -1,0 +1,47 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  appimage:
+    name: Build AppImage (container)
+    runs-on: ubuntu-latest
+    container: ubuntu:24.04
+    env:
+      ODIN_TAG: dev-2026-09
+    steps:
+      - name: Install build dependencies
+        run: |
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            build-essential git curl ca-certificates file \
+            libx11-dev libxcursor-dev libxrandr-dev libxinerama-dev libxi-dev \
+            libgl1-mesa-dev libasound2-dev libpulse-dev fonts-liberation
+
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Install Odin (${{ env.ODIN_TAG }})
+        run: |
+          cd /opt
+          curl -fsSLO "https://github.com/odin-lang/Odin/releases/download/${ODIN_TAG}/odin-linux-amd64-${ODIN_TAG}.tar.gz"
+          tar xzf "odin-linux-amd64-${ODIN_TAG}.tar.gz"
+          mv "odin-linux-amd64-${ODIN_TAG}" odin
+          echo "/opt/odin" >> "$GITHUB_PATH"
+
+      - name: Build (release)
+        run: make release
+
+      - name: Build AppImage
+        run: ./packaging/build-appimage.sh x86_64
+
+      - name: Attach AppImage to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: build/Music-Trainer-x86_64.AppImage
+          fail_on_unmatched_files: true
