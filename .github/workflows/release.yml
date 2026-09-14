@@ -25,7 +25,7 @@ jobs:
         run: |
           apt-get update
           DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-            build-essential git curl ca-certificates file \
+            build-essential clang git curl ca-certificates file \
             libx11-dev libxcursor-dev libxrandr-dev libxinerama-dev libxi-dev \
             libgl1-mesa-dev libasound2-dev libpulse-dev fonts-liberation
 
