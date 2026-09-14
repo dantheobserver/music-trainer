@@ -37,7 +37,8 @@ jobs:
           cd /opt
           curl -fsSLO "https://github.com/odin-lang/Odin/releases/download/${ODIN_TAG}/odin-linux-amd64-${ODIN_TAG}.tar.gz"
           tar xzf "odin-linux-amd64-${ODIN_TAG}.tar.gz"
-          mv "odin-linux-amd64-${ODIN_TAG}" odin
+          # The tarball's root directory embeds the nightly date, not the tag
+          mv odin-linux-amd64-*/ odin
           echo "/opt/odin" >> "$GITHUB_PATH"
 
       - name: Build (release)
