@@ -33,7 +33,7 @@ Built with [Odin](https://odin-lang.org/) and [Raylib](https://www.raylib.com/).
 - **Zoom and scroll** — Ctrl+wheel to zoom, wheel to scroll horizontally
 - **Track title** — shown in the title bar and window title
 - **URL download** — paste a URL and download audio via yt-dlp
-- **System audio recording** — record audio playing from your system (PulseAudio/PipeWire)
+- **System audio recording** — record audio playing from your system; on Linux it captures the default output's monitor channel, on macOS it captures the microphone or [BlackHole](https://github.com/ExistentialAudio/BlackHole) (see *Recording system audio on macOS* below). Click the chip next to the record button to switch capture devices
 - **File library** — browse, preview, rename, and delete files in your library
 - **Drag and drop** — drop audio files directly onto the window
 
@@ -47,15 +47,8 @@ Built with [Odin](https://odin-lang.org/) and [Raylib](https://www.raylib.com/).
 ### Optional
 
 - **yt-dlp** — for downloading audio from URLs (`pip install yt-dlp` or your package manager; on macOS `brew install yt-dlp`)
-- **PulseAudio utilities** (`parecord`, `pactl`) — for system audio recording; included with `pulseaudio-utils` on most Linux distros (recording is Linux-only)
+- **pactl** (Linux only) — lets the app pick the monitor of the *default* output sink when recording; without it the first monitor source is used. Included with `pulseaudio-utils` (also available through PipeWire's PulseAudio compatibility layer)
 - **Node.js** — required by yt-dlp for some extractors
-
-## Releases
-
-Prebuilt binaries are attached to [GitHub Releases](https://github.com/dantheobserver/music-trainer/releases):
-
-- **Linux** — `Music-Trainer-x86_64.AppImage` (bundles its fonts; just `chmod +x` and run)
-- **macOS** — `Music-Trainer-macOS.dmg` (universal binary, Apple Silicon + Intel). The app is not notarized — on first launch, right-click it and choose **Open**, or run `xattr -cr "/Applications/Music Trainer.app"`
 
 ## Building
 
@@ -111,6 +104,26 @@ Select a region and hit **Isolate** (or `Z`) to zoom into it — the region loop
 ## Music Library
 
 Audio files are stored in `~/Music/music_trainer/`. This directory is created automatically on first use. Downloaded files, recordings, and any files you want in the library should be placed here. The Library panel browses this folder and supports `.wav`, `.mp3`, `.flac`, and `.ogg` formats.
+
+## Recording system audio on macOS
+
+macOS doesn't expose a system-wide "what you hear" input. The free, open-source [BlackHole](https://github.com/ExistentialAudio/BlackHole) virtual audio driver provides one:
+
+1. Install: `brew install blackhole-2ch`, then reboot (macOS loads audio drivers at boot)
+2. Open **Audio MIDI Setup** → **+** → **Create Multi-Output Device**
+3. Tick **BlackHole 2ch** and your real output device, keeping your real output listed first (clock source)
+4. Set the Multi-Output Device as the system output (System Settings → Sound)
+5. Start Music Trainer — the record chip auto-picks **BlackHole 2ch**; record as usual
+
+The app is not notarized: on first launch, right-click it and choose **Open** (or `xattr -cr "/Applications/Music Trainer.app"`), then allow **Microphone** access when prompted.
+
+## Releases
+
+Prebuilt binaries are attached to [GitHub Releases](https://github.com/dantheobserver/music-trainer/releases):
+
+- **Linux** — `Music-Trainer-x86_64.AppImage` (bundles its fonts; just `chmod +x` and run)
+- **macOS** — `Music-Trainer-macOS.dmg` (universal binary, Apple Silicon + Intel). The app is not notarized — on first launch, right-click it and choose **Open**, or run `xattr -cr "/Applications/Music Trainer.app"`
+
 
 ## Keyboard Shortcuts
 

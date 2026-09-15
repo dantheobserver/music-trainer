@@ -5,3 +5,4 @@ music_trainer
 *.mp3
 *.flac
 *.ogg
+miniaudio/miniaudio.o

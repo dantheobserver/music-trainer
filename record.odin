@@ -1,11 +1,13 @@
 package music_trainer
 
+import "core:c"
 import "core:fmt"
 import "core:math"
 import "core:os"
 import "core:strings"
 import "core:time"
 
+import ma "miniaudio"
 import rl "vendor:raylib"
 
 // Set a persistent status-bar message. fmt.ctprintf allocates from the temp
@@ -19,22 +21,20 @@ set_statusf :: proc(state: ^App_State, format: string, args: ..any) {
 	state.download_status = state.status_owned
 }
 
-// Records system audio via parec streaming raw PCM through a pipe so the
-// live level strip can be rendered while capturing. On stop, the accumulated
-// samples are written as a WAV and the file is loaded immediately.
+// Records system audio through miniaudio capture devices. On Linux the
+// capture list contains PulseAudio monitor sources, so the app grabs
+// whatever is playing system-wide; on macOS it captures the microphone, or
+// BlackHole when the user has installed it (see README). Samples arrive as
+// interleaved s16 stereo in a ring buffer inside the C shim, drained by
+// poll_recording every frame. On stop, the accumulated samples are written
+// as a WAV and the file is loaded immediately.
 
-@(private = "file")
-record_process: os.Process
-
-@(private = "file")
+// Package-private so main.odin's temporary self-test hook can report it.
+@(private = "package")
 record_path: string
 
-// Pipe read end — parec writes raw s16le stereo PCM to the write end.
-@(private = "package")
-record_pipe: ^os.File
-
 // Live capture buffer — mono f32 samples normalized to -1..1, appended by
-// poll_recording as data arrives from the pipe.
+// poll_recording as data arrives from the capture ring.
 @(private = "package")
 record_samples: [dynamic]f32
 
@@ -45,7 +45,7 @@ record_sample_rate: u32
 // stored exactly once in a ring buffer as its samples arrive, and the strip
 // scrolls at a constant rate — cost is flat and the motion never rescales.
 RECORD_CHUNK_FRAMES :: 1024 // mono frames per chunk (~21ms at 48kHz)
-RECORD_LEVEL_CAP :: 2048   // strip history capacity (~43s at 2px per chunk)
+RECORD_LEVEL_CAP :: 2048  // strip history capacity (~43s at 2px per chunk)
 
 @(private = "package")
 record_strip: [RECORD_LEVEL_CAP]Waveform_Column // min/max per chunk, wraps
@@ -59,32 +59,134 @@ record_chunk_partial: Waveform_Column // running min/max of the unfinished chunk
 @(private = "package")
 record_chunk_fill: int // mono samples in the unfinished chunk
 
-get_monitor_source :: proc() -> string {
-	result, stdout, _, err := os.process_exec(
-		os.Process_Desc{
-			command = {"pactl", "get-default-sink"},
-		},
+// Capture devices, refreshed from miniaudio on demand. Names are heap
+// copies owned here (deleted on the next refresh).
+MAX_RECORD_DEVICES :: 64
+
+@(private = "package")
+record_device_names: [MAX_RECORD_DEVICES]string
+
+@(private = "package")
+record_device_count: int
+
+// Index of the device to record from; -1 until the first auto-selection.
+@(private = "package")
+record_device_selected: int = -1
+
+@(private = "package")
+record_devices_scanned: bool
+
+// Re-enumerate capture devices, preserving the user's selection when the
+// device is still present; otherwise auto-select a system-audio source.
+refresh_record_devices :: proc() {
+	for i in 0 ..< MAX_RECORD_DEVICES {
+		if len(record_device_names[i]) > 0 do delete(record_device_names[i])
+		record_device_names[i] = ""
+	}
+	record_devices_scanned = true
+
+	n := ma.shim_capture_enumerate()
+	if n < 0 do return
+	count := min(n, c.int(MAX_RECORD_DEVICES))
+	for i in 0 ..< count {
+		record_device_names[i] = strings.clone_from_cstring(ma.shim_capture_device_name(i))
+	}
+	record_device_count = int(count)
+
+	// Keep the previous selection if the device survived the rescan.
+	if record_device_selected >= 0 && record_device_selected < record_device_count {
+		return
+	}
+	record_device_selected = auto_select_device()
+}
+
+auto_select_device :: proc() -> int {
+	if record_device_count == 0 do return -1
+
+	// Prefer system-audio loopback: PulseAudio monitor sources (Linux) or
+	// BlackHole (macOS), then the backend's default, then the first device.
+
+	// On Linux, target the monitor of the *default* output sink so the
+	// recording captures what is actually audible (the first monitor on the
+	// list may belong to an unused digital output). pactl reports the sink's
+	// description, which PulseAudio surfaces as "Monitor of <description>".
+	sink_desc := default_sink_description()
+	if len(sink_desc) > 0 {
+		desc_lower := strings.to_lower(sink_desc)
+		for i in 0 ..< record_device_count {
+			name_lower := strings.to_lower(record_device_names[i])
+			if strings.contains(name_lower, "monitor") && strings.contains(name_lower, desc_lower) do return i
+		}
+	}
+	for i in 0 ..< record_device_count {
+		if strings.contains(strings.to_lower(record_device_names[i]), "monitor") do return i
+	}
+	for i in 0 ..< record_device_count {
+		if strings.contains(strings.to_lower(record_device_names[i]), "blackhole") do return i
+	}
+	for i in 0 ..< record_device_count {
+		if ma.shim_capture_device_is_default(c.int(i)) != 0 do return i
+	}
+	return 0
+}
+
+// Description of the default output sink (Linux only; needs pactl, which
+// works against PipeWire too). Empty when unavailable — the caller falls
+// back to the first monitor.
+default_sink_description :: proc() -> string {
+	sink_res, sink_out, _, sink_err := os.process_exec(
+		os.Process_Desc{command = {"pactl", "get-default-sink"}},
 		context.temp_allocator,
 	)
-	if err != nil || result.exit_code != 0 do return ""
-	sink := strings.trim_space(string(stdout))
-	if len(sink) == 0 do return ""
-	return strings.concatenate({sink, ".monitor"}, context.temp_allocator)
+	if sink_err != nil || sink_res.exit_code != 0 do return ""
+	sink_name := strings.trim_space(string(sink_out))
+	if len(sink_name) == 0 do return ""
+
+	list_res, list_out, _, list_err := os.process_exec(
+		os.Process_Desc{command = {"pactl", "list", "sinks"}},
+		context.temp_allocator,
+	)
+	if list_err != nil || list_res.exit_code != 0 do return ""
+
+	sinks_text := string(list_out)
+	marker := strings.concatenate({"Name: ", sink_name}, context.temp_allocator)
+	idx := strings.index(sinks_text, marker)
+	if idx < 0 do return ""
+	block := sinks_text[idx:]
+	desc_idx := strings.index(block, "Description:")
+	if desc_idx < 0 do return ""
+	line := block[desc_idx + len("Description:"):]
+	if eol := strings.index(line, "\n"); eol >= 0 {
+		line = line[:eol]
+	}
+	return strings.trim_space(line)
+}
+
+// Record-source dropdown state; the menu itself is drawn by ui's
+// draw_record_menu (after the waveform, so it floats on top).
+@(private = "package")
+record_menu_open: bool
+
+@(private = "package")
+record_menu_just_opened: bool
+
+select_record_device :: proc(state: ^App_State, index: int) {
+	if index < 0 || index >= record_device_count do return
+	record_device_selected = index
+	set_statusf(state, "Recording source: %s", record_device_names[index])
 }
 
 start_recording :: proc(state: ^App_State) {
-	// Recording pipes PulseAudio's monitor channel via parec (Linux-only).
-	when ODIN_OS != .Linux {
-		state.download_status = "Recording requires PulseAudio (Linux only)"
-		return
-	}
 	if state.is_recording do return
 
-	monitor := get_monitor_source()
-	if len(monitor) == 0 {
-		state.download_status = "No audio monitor source found"
+	if !record_devices_scanned {
+		refresh_record_devices()
+	}
+	if record_device_count == 0 {
+		state.download_status = "No audio input devices found"
 		return
 	}
+	device_index := record_device_selected >= 0 ? record_device_selected : 0
 
 	dir := get_download_dir()
 	now := time.now()
@@ -93,49 +195,17 @@ start_recording :: proc(state: ^App_State) {
 	filename := fmt.tprintf("recording_%04d%02d%02d_%02d%02d%02d.wav", y, int(mon), d, h, m, s)
 
 	record_path = strings.concatenate({dir, "/", filename})
-	record_sample_rate = 48000
 	clear(&record_samples)
 	record_strip_count = 0
 	record_chunk_partial = Waveform_Column{0, 0}
 	record_chunk_fill = 0
 
-	// Pipe parec's stdout so samples can be drained while it records.
-	pipe_r, pipe_w, pipe_err := os.pipe()
-	if pipe_err != nil {
-		state.download_status = "Failed to start recording (pipe)"
-		fmt.eprintfln("pipe error: %v", pipe_err)
-		return
-	}
-
-	device_arg := strings.concatenate({"--device=", monitor})
-
-	proc_or_err, start_err := os.process_start({
-		command = {
-			"parec",
-			device_arg,
-			"--format=s16le",
-			"--rate=48000",
-			"--channels=2",
-			// ~20ms fragments — without this parec batches ~340ms of audio into
-			// one pipe write, which makes the live strip jump instead of scroll
-			"--latency-msec=20",
-		},
-		stdout = pipe_w,
-	})
-
-	// The child owns the write end now; closing our copy lets the read end
-	// see EOF once parec exits. On failure both ends must be released.
-	os.close(pipe_w)
-
-	if start_err != nil {
-		os.close(pipe_r)
+	if ma.shim_capture_start(c.int(device_index), 48000, 2) != 0 {
 		state.download_status = "Failed to start recording"
-		fmt.eprintfln("parec start error: %v", start_err)
+		fmt.eprintfln("capture start failed: %s", record_device_names[device_index])
 		return
 	}
-
-	record_process = proc_or_err
-	record_pipe = pipe_r
+	record_sample_rate = ma.shim_capture_sample_rate()
 
 	// The recording becomes the active view — release any previously loaded
 	// track so the UI is consistent (stops playback, clears selection/notes).
@@ -145,25 +215,20 @@ start_recording :: proc(state: ^App_State) {
 
 	state.is_recording = true
 	state.record_file = record_path
-	state.download_status = "Recording system audio..."
+	record_menu_open = false
+	set_statusf(state, "Recording system audio via: %s", record_device_names[device_index])
 }
 
 // Drain whatever PCM has arrived since the last frame into the live buffer.
 // Called once per frame from the main loop while recording.
 poll_recording :: proc(state: ^App_State) {
-	if !state.is_recording || record_pipe == nil do return
+	if !state.is_recording do return
 
 	buf: [8192]u8
 	for {
-		has_data, pipe_err := os.pipe_has_data(record_pipe)
-		if pipe_err != nil do break // Broken_Pipe: parec is gone, buffer drained
-		if !has_data do break
-
-		n, read_err := os.read(record_pipe, buf[:])
-		if n > 0 {
-			append_pcm(buf[:n])
-		}
-		if read_err != nil || n == 0 do break
+		n := ma.shim_capture_poll(raw_data(&buf), c.int(len(buf)))
+		if n <= 0 do break
+		append_pcm(buf[:n])
 	}
 }
 
@@ -204,24 +269,14 @@ stop_recording :: proc(state: ^App_State) {
 
 	state.is_recording = false
 
-	term_err := os.process_terminate(record_process)
-	if term_err != nil {
-		fmt.eprintfln("Failed to stop parec: %v", term_err)
-		_ = os.process_kill(record_process)
-	}
-	_, _ = os.process_wait(record_process)
-
-	// parec is gone — drain any bytes still sitting in the pipe buffer.
+	// Stop capture, then drain whatever is still sitting in the shim's ring.
+	ma.shim_capture_stop()
 	buf: [8192]u8
 	for {
-		n, read_err := os.read(record_pipe, buf[:])
-		if n > 0 {
-			append_pcm(buf[:n])
-		}
-		if read_err != nil || n == 0 do break
+		n := ma.shim_capture_poll(raw_data(&buf), c.int(len(buf)))
+		if n <= 0 do break
+		append_pcm(buf[:n])
 	}
-	os.close(record_pipe)
-	record_pipe = nil
 
 	sample_count := len(record_samples)
 	if sample_count == 0 {

@@ -55,6 +55,7 @@ main :: proc() {
 
 		draw_ui(&state)
 		draw_waveform(&state)
+		draw_record_menu(&state)
 		draw_library_overlay(&state)
 
 		// F12 — save a screenshot of the current frame next to the binary

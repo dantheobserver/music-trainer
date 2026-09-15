@@ -28,5 +28,9 @@
 	<true/>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Music Trainer records audio for ear-training practice.</string>
+	<key>NSAudioCaptureUsageDescription</key>
+	<string>Music Trainer captures system audio (via BlackHole) for ear-training practice.</string>
 </dict>
 </plist>
