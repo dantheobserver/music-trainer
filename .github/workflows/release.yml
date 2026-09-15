@@ -53,3 +53,35 @@ jobs:
           tag_name: ${{ inputs.tag || github.ref_name }}
           files: build/Music-Trainer-x86_64.AppImage
           fail_on_unmatched_files: true
+
+  macos:
+    name: Build macOS DMG
+    runs-on: macos-15
+    env:
+      ODIN_TAG: dev-2026-09
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Install Odin (${{ env.ODIN_TAG }})
+        run: |
+          mkdir -p "$HOME/opt"
+          cd "$HOME/opt"
+          curl -fsSLO "https://github.com/odin-lang/Odin/releases/download/${ODIN_TAG}/odin-macos-arm64-${ODIN_TAG}.tar.gz"
+          tar xzf "odin-macos-arm64-${ODIN_TAG}.tar.gz"
+          # The tarball's root directory embeds the nightly date, not the tag
+          mv odin-macos-arm64-*/ odin
+          echo "$HOME/opt/odin" >> "$GITHUB_PATH"
+
+      - name: Build (universal binary)
+        run: make release-macos
+
+      - name: Package DMG
+        run: ./packaging/build-dmg.sh "${{ inputs.tag || github.ref_name }}"
+
+      - name: Attach DMG to release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.tag || github.ref_name }}
+          files: build/Music-Trainer-macOS.dmg
+          fail_on_unmatched_files: true

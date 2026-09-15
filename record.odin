@@ -73,6 +73,11 @@ get_monitor_source :: proc() -> string {
 }
 
 start_recording :: proc(state: ^App_State) {
+	// Recording pipes PulseAudio's monitor channel via parec (Linux-only).
+	when ODIN_OS != .Linux {
+		state.download_status = "Recording requires PulseAudio (Linux only)"
+		return
+	}
 	if state.is_recording do return
 
 	monitor := get_monitor_source()

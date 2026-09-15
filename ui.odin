@@ -14,8 +14,8 @@ CONTROLS_HEIGHT :: 90
 STATUS_HEIGHT :: 30
 NOTE_DISPLAY_HEIGHT :: 110
 
-FONT_PATH      :: "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf"
-FONT_BOLD_PATH :: "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf"
+FONT_PATH :: "/System/Library/Fonts/Supplemental/Arial.ttf" when ODIN_OS == .Darwin else "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf"
+FONT_BOLD_PATH :: "/System/Library/Fonts/Supplemental/Arial Bold.ttf" when ODIN_OS == .Darwin else "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf"
 FONT_SIZE      :: 22
 FONT_SPACING   :: 1.0
 

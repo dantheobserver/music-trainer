@@ -42,13 +42,20 @@ Built with [Odin](https://odin-lang.org/) and [Raylib](https://www.raylib.com/).
 - **Odin compiler** — [installation instructions](https://odin-lang.org/docs/install/)
 - **Raylib** — included with Odin's vendor collection, no separate install needed
 - **GNU Make** — for the build system
-- **Liberation Sans font** — usually pre-installed on Linux (`/usr/share/fonts/truetype/liberation/`)
+- **Liberation Sans font** — usually pre-installed on Linux (`/usr/share/fonts/truetype/liberation/`); on macOS the system Arial font is used
 
 ### Optional
 
-- **yt-dlp** — for downloading audio from URLs (`pip install yt-dlp` or your package manager)
-- **PulseAudio utilities** (`parecord`, `pactl`) — for system audio recording; included with `pulseaudio-utils` on most Linux distros
+- **yt-dlp** — for downloading audio from URLs (`pip install yt-dlp` or your package manager; on macOS `brew install yt-dlp`)
+- **PulseAudio utilities** (`parecord`, `pactl`) — for system audio recording; included with `pulseaudio-utils` on most Linux distros (recording is Linux-only)
 - **Node.js** — required by yt-dlp for some extractors
+
+## Releases
+
+Prebuilt binaries are attached to [GitHub Releases](https://github.com/dantheobserver/music-trainer/releases):
+
+- **Linux** — `Music-Trainer-x86_64.AppImage` (bundles its fonts; just `chmod +x` and run)
+- **macOS** — `Music-Trainer-macOS.dmg` (universal binary, Apple Silicon + Intel). The app is not notarized — on first launch, right-click it and choose **Open**, or run `xattr -cr "/Applications/Music Trainer.app"`
 
 ## Building
 
